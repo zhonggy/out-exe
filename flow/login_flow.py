@@ -124,7 +124,7 @@ class LoginFlow(BaseFlow):
                 verdict = StatusVerdict(AccountStatus.FAILED.value, "邮箱提交失败", retryable=True)
                 return self._fail(verdict, FlowStage.USERNAME_INPUT)
             self.mark(FlowStage.USERNAME_INPUT, account=account)
-            state = self.detector.wait_for_any(list(_ENTRY_STATES), timeout_ms=30000, ignore=["login_email"])
+            state = self.detector.wait_for_any(list(_ENTRY_STATES), timeout_ms=30000, ignore=["login_email", "unknown"])
             if self.log:
                 self.log.info("username_input", f"提交邮箱后状态={state}")
 
@@ -154,7 +154,7 @@ class LoginFlow(BaseFlow):
                         verdict = StatusVerdict(AccountStatus.FAILED.value, "邮箱提交失败", retryable=True)
                         return self._fail(verdict, FlowStage.USERNAME_INPUT)
                     self.mark(FlowStage.USERNAME_INPUT, account=account)
-                    state = self.detector.wait_for_any(list(_ENTRY_STATES), timeout_ms=30000, ignore=["login_email"])
+                    state = self.detector.wait_for_any(list(_ENTRY_STATES), timeout_ms=30000, ignore=["login_email", "unknown"])
 
         if state == "login_password":
             if not password:
@@ -195,7 +195,7 @@ class LoginFlow(BaseFlow):
         if state in ("kmsi", "passkey", "protect_account"):
             # 非阻塞拦截页：关掉继续
             handled = self._dismiss_intercept(state)
-            nxt = self.detector.wait_for_any(list(_ENTRY_STATES), timeout_ms=20000, ignore=[state] if handled else [])
+            nxt = self.detector.wait_for_any(list(_ENTRY_STATES), timeout_ms=30000, ignore=[state, "unknown"] if handled else ["unknown"])
             return self._handle_state(nxt, account, password, depth + 1)
 
         if state == "account_locked":
@@ -230,7 +230,7 @@ class LoginFlow(BaseFlow):
         if state == "login_password" and password:
             # 页面回退到密码页（如输入被吞）：再试一次
             self.action.fill_password(password)
-            nxt = self.detector.wait_for_any(list(_ENTRY_STATES), timeout_ms=30000, ignore=["login_password"])
+            nxt = self.detector.wait_for_any(list(_ENTRY_STATES), timeout_ms=30000, ignore=["login_password", "unknown"])
             return self._handle_state(nxt, account, password, depth + 1)
 
         if state == "risk_blocked":
@@ -275,7 +275,7 @@ class LoginFlow(BaseFlow):
             return self._fail(verdict, FlowStage.WAIT_VERIFY)
 
         self.mark(FlowStage.VERIFIED, kind="captcha")
-        nxt = self.detector.wait_for_any(list(_ENTRY_STATES), timeout_ms=30000, ignore=["captcha"])
+        nxt = self.detector.wait_for_any(list(_ENTRY_STATES), timeout_ms=45000, ignore=["captcha", "unknown"])
         return self._handle_state(nxt, account, password, depth + 1)
 
     def _captcha_passed(self) -> bool:
@@ -388,7 +388,7 @@ class LoginFlow(BaseFlow):
         else:
             self.action.click_text(("个人帐户", "个人账户", "Personal account"), 3000)
             self.action.wait_random(1200, 2200)
-        return self.detector.wait_for_any(list(_ENTRY_STATES), timeout_ms=25000, ignore=["account_type"])
+        return self.detector.wait_for_any(list(_ENTRY_STATES), timeout_ms=25000, ignore=["account_type", "unknown"])
 
     # ---------- 结果 ----------
     def _save_failure_evidence(self, verdict: StatusVerdict) -> None:
