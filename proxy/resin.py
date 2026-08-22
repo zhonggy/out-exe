@@ -166,49 +166,84 @@ class Resin:
         return info
 
     # ---------- 连通性测试 ----------
+    # 多端点探测：某些出口节点会干扰特定站点的 TLS（SSL EOF），换一个即可
+    _PROBE_ENDPOINTS = (
+        ("https://ipinfo.io/json", "ip"),
+        ("https://api.ipify.org?format=json", "ip"),
+        ("http://ip-api.com/json/?fields=query,countryCode", "query"),
+    )
+
+    def _probe_once(self, url: str, ip_key: str, proxies: dict, timeout: int) -> tuple[str, str]:
+        """单次探测，返回 (ip, country)。失败抛异常。"""
+        import requests
+
+        r = requests.get(
+            url, proxies=proxies, timeout=timeout,
+            headers={"Accept": "application/json", "User-Agent": "curl/8.0"},
+        )
+        if r.status_code != 200:
+            raise RuntimeError(f"HTTP {r.status_code}")
+        d = r.json()
+        return str(d.get(ip_key, "?")), str(d.get("country") or d.get("countryCode") or "")
+
     def test_connection(self, timeout: int = 10) -> Dict[str, Any]:
-        """同临时 Account 连续两次经正向代理查 ipinfo：验证连通 + 粘性。"""
+        """同临时 Account 连续两次经正向代理查出口 IP：验证连通 + 粘性。
+
+        多端点轮试：某端点 SSL/连接失败自动换下一个，全部失败才报错
+        （并附上每个端点的具体错误，便于定位是出口屏蔽还是代理故障）。
+        """
         if not self.usable:
             return {"ok": False, "detail": "Resin 未启用或 URL 未配置（格式: http://host:port/token）"}
         import random
         import string
 
-        import requests
-
         account = "test" + "".join(random.choices(string.ascii_lowercase + string.digits, k=6))
-        opt = self.forward_proxy_option(account)
         proxy_url = self.forward_proxy_url(account)
         proxies = {"http": proxy_url, "https": proxy_url}
+        ident = f"{self.platform}.{account}"
 
+        # 选一个能用的端点（最多试 3 个）
+        endpoint = err_summary = None
+        errors = []
+        for url, key in self._PROBE_ENDPOINTS:
+            try:
+                self._probe_once(url, key, proxies, timeout)
+                endpoint = (url, key)
+                break
+            except Exception as exc:
+                msg = f"{exc.__class__.__name__}: {str(exc)[:120]}"
+                errors.append(f"{url.split('/')[2]} → {msg}")
+        if endpoint is None:
+            return {
+                "ok": False,
+                "detail": f"所有探测端点均失败（代理可能不可用）: " + " | ".join(errors),
+            }
+
+        # 用选定端点连查两次验证粘性
+        url, key = endpoint
         ips, parts = [], []
         for i in range(2):
             try:
-                r = requests.get(
-                    "https://ipinfo.io/json",
-                    proxies=proxies,
-                    timeout=timeout,
-                    headers={"Accept": "application/json"},
-                )
-                if r.status_code != 200:
-                    return {"ok": False, "detail": f"Resin 返回 HTTP {r.status_code}"}
-                d = r.json()
-                ip, country = d.get("ip", "?"), d.get("country", "")
+                ip, country = self._probe_once(url, key, proxies, timeout)
                 ips.append(ip)
-                parts.append(f"{ip} ({country})")
+                parts.append(f"{ip} ({country})" if country else ip)
             except Exception as exc:
                 return {
                     "ok": False,
-                    "detail": f"第{i + 1}次请求失败: {exc.__class__.__name__}: {exc}",
+                    "detail": f"第{i + 1}次请求失败({url.split('/')[2]}): "
+                    f"{exc.__class__.__name__}: {str(exc)[:150]}",
                 }
         sticky = len(ips) == 2 and ips[0] == ips[1]
         return {
             "ok": True,
             "sticky": sticky,
-            "account": f"{self.platform}.{account}",
+            "account": ident,
             "ip": ips[0],
+            "endpoint": url.split("/")[2],
             "detail": (
-                f"同 Account({self.platform}.{account}) 两次出口: "
-                f"{parts[0]} → {parts[1]}；" + ("粘性 OK" if sticky else "IP 变化，粘性异常")
+                f"同 Account({ident}) 两次出口: {parts[0]} → {parts[1]}；"
+                + ("粘性 OK" if sticky else "IP 变化，粘性异常")
+                + (f"（注：{'、'.join(errors)} 不可达，已自动换端点）" if errors else "")
             ),
         }
 
