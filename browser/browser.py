@@ -81,19 +81,19 @@ class BrowserSession:
         #    优先级：Resin 粘性代理（按账号身份） > 普通代理池 > 直连（无伪装）
         info: Dict[str, Any] = {}
         using_proxy = False
+        resin_proxy_opt: Optional[Dict[str, str]] = None
         from proxy.resin import get_resin
 
         resin = get_resin()
         if resin.usable and self.account:
             # Resin 正向代理：认证用户名 Platform.Account，粘性 IP 绑定账号身份
-            proxy_opt = resin.forward_proxy_option(self.account)
-            if proxy_opt is None:
+            resin_proxy_opt = resin.forward_proxy_option(self.account)
+            if resin_proxy_opt is None:
                 raise BrowserLaunchError(
                     f"Resin 已启用但无法为账号 {self.account} 构造代理身份"
                 )
             self.proxy_url = f"resin://{resin.platform}.{resin.account_identity(self.account)}"
             self._resin_account_identity = resin.account_identity(self.account)
-            common["proxy"] = proxy_opt
             using_proxy = True
             # 出口信息走 Resin 反向代理查询（带 X-Resin-Account 头）
             info = resin.lookup_exit_info(self.account)
@@ -130,7 +130,9 @@ class BrowserSession:
             "headless": bool(browser_cfg.get("headless", False)),
             "args": args,
         }
-        if not using_proxy:
+        if resin_proxy_opt is not None:
+            common["proxy"] = resin_proxy_opt
+        elif not using_proxy:
             proxy_opt = build_proxy_option(self.proxy_url)
             if proxy_opt:
                 common["proxy"] = proxy_opt

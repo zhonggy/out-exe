@@ -60,6 +60,29 @@ def test_config_dotted_and_resolve(cfg):
     assert cfg.path_of("database.path").name == "app.db"
 
 
+def test_launch_no_use_before_assignment():
+    """静态检查 _launch 里不存在局部变量先用后赋值（曾因 common 提前使用导致启动失败）。"""
+    import ast
+
+    src = (ROOT / "browser" / "browser.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    fn = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef) and n.name == "_launch"
+    )
+    first_store: dict[str, int] = {}
+    first_load: dict[str, int] = {}
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Name):
+            table = first_store if isinstance(node.ctx, ast.Store) else first_load
+            table.setdefault(node.id, node.lineno)
+    for name, load_line in first_load.items():
+        if name in first_store:
+            assert first_store[name] <= load_line, (
+                f"_launch 中 {name} 在行 {load_line} 先使用，却到行 {first_store[name]} 才赋值"
+            )
+
+
 def test_config_env_override(monkeypatch):
     monkeypatch.setenv("OA_SYSTEM__MAX_WORKERS", "7")
     monkeypatch.setenv("OA_BROWSER__HEADLESS", "true")
