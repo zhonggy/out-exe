@@ -86,6 +86,7 @@
            background: var(--panel); border: 1px solid var(--line);
            border-radius: var(--radius); padding: 16px; }
   .ctrl-col { display: flex; flex-direction: column; gap: 10px; }
+  .sel-row { background: rgba(24,144,255,.08) !important; }
   .ctrl-label { color: var(--muted); font-size: 13px; }
   .resinbox { background: var(--panel); border: 1px solid var(--line);
               border-radius: var(--radius); padding: 16px;
@@ -185,13 +186,14 @@
       <!-- 账号 -->
       <section v-show="tab==='acc'">
         <div class="row">
-          <select v-model="accFilter" @change="loadAccounts">
+          <select v-model="accFilter" @change="onAccFilterChange">
             <option value="">全部状态</option>
-            <option v-for="s in accStatuses" :key="s" :value="s">{{ s }}</option>
+            <option v-for="s in accStatuses" :key="s.value" :value="s.value">{{ s.label }}</option>
           </select>
           <button class="btn" @click="loadAccounts">刷新</button>
           <button class="btn primary" @click="post('/api/accounts/import').then(loadAccounts)">从 accounts.txt 导入</button>
           <a class="btn" :href="exportUrl" target="_blank" style="text-decoration:none">导出 CSV</a>
+          <button class="btn danger" @click="deleteSelected" :disabled="!selectedAccounts.size">删除选中（{{ selectedAccounts.size }}）</button>
         </div>
         <div class="grid2 sec">
           <div>
@@ -209,9 +211,13 @@
           </div>
         </div>
         <table>
-          <thead><tr><th>ID</th><th>账号</th><th>状态</th><th>备注</th><th>执行</th><th>失败</th><th>操作</th></tr></thead>
+          <thead><tr>
+            <th style="width:32px"><input type="checkbox" :checked="allChecked" @change="toggleAll" /></th>
+            <th>ID</th><th>账号</th><th>状态</th><th>备注</th><th>执行</th><th>失败</th><th>操作</th>
+          </tr></thead>
           <tbody>
-            <tr v-for="a in accounts" :key="a.id">
+            <tr v-for="a in accounts" :key="a.id" :class="{'sel-row': selectedAccounts.has(a.account)}">
+              <td><input type="checkbox" v-model="selectedAccounts" :value="a.account" /></td>
               <td>{{ a.id }}</td><td>{{ a.account }}</td>
               <td><span class="st" :class="a.status">{{ a.status_label || a.status }}</span></td>
               <td class="muted">{{ a.note }}</td><td>{{ a.run_count }}</td><td>{{ a.fail_count }}</td>
@@ -221,7 +227,7 @@
                 <button class="btn danger" @click="del('/api/accounts/'+encodeURIComponent(a.account)).then(loadAccounts)">删除</button>
               </td>
             </tr>
-            <tr v-if="!accounts.length"><td colspan="7" class="muted">暂无账号</td></tr>
+            <tr v-if="!accounts.length"><td colspan="8" class="muted">暂无账号</td></tr>
           </tbody>
         </table>
       </section>
@@ -411,10 +417,22 @@ createApp({
       stats: {}, accounts: [], tasks: [], browsers: [], profiles: {}, proxy: {},
       logs: [], logCursor: 0, logLevel: '', autoScroll: true,
       accFilter: '', taskFilter: '', importText: '', taskDetail: null,
+      selectedAccounts: new Set(),
       newAcc: { account: '', password: '' },
       workerInput: 3, batchLimit: 20,
       toast: '', lastUpdate: '',
-      accStatuses: ['NEW','PENDING','RUNNING','OK','WAIT_VERIFY','PASSWORD_WRONG','LOCKED','NOT_FOUND','FAILED','SKIPPED'],
+      accStatuses: [
+        {value:'NEW', label:'新账号'},
+        {value:'PENDING', label:'待处理'},
+        {value:'RUNNING', label:'运行中'},
+        {value:'OK', label:'登录成功'},
+        {value:'WAIT_VERIFY', label:'等待验证'},
+        {value:'PASSWORD_WRONG', label:'密码错误'},
+        {value:'LOCKED', label:'已锁定'},
+        {value:'NOT_FOUND', label:'账号不存在'},
+        {value:'FAILED', label:'失败'},
+        {value:'SKIPPED', label:'已跳过'},
+      ],
       taskStatuses: ['CREATED','QUEUED','RUNNING','COMPLETED','FAILED','CANCELLED'],
       timer: null,
       cfgText: '',
@@ -520,6 +538,38 @@ createApp({
     async loadAccounts() {
       const d = await this.req('/api/accounts?limit=500' + (this.accFilter ? '&status=' + this.accFilter : ''));
       this.accounts = d.items;
+      // 过滤后清理选中项：只保留仍在列表中的（防止跨状态误删）
+      const alive = new Set(this.accounts.map(a => a.account));
+      for (const acc of [...this.selectedAccounts]) {
+        if (!alive.has(acc)) this.selectedAccounts.delete(acc);
+      }
+    },
+    onAccFilterChange() {
+      this.selectedAccounts.clear();
+      this.loadAccounts();
+    },
+    allChecked() {
+      return this.accounts.length > 0 && this.accounts.every(a => this.selectedAccounts.has(a.account));
+    },
+    toggleAll() {
+      if (this.allChecked) {
+        for (const a of this.accounts) this.selectedAccounts.delete(a.account);
+      } else {
+        for (const a of this.accounts) this.selectedAccounts.add(a.account);
+      }
+      // 触发响应式更新
+      this.selectedAccounts = new Set(this.selectedAccounts);
+    },
+    async deleteSelected() {
+      const list = [...this.selectedAccounts];
+      if (!list.length) return;
+      if (!confirm('确定删除选中的 ' + list.length + ' 个账号？删除后不可恢复')) return;
+      try {
+        const r = await this.req('/api/accounts/batch_delete', { method: 'POST', body: JSON.stringify({accounts: list}) });
+        this.notify('已删除 ' + r.deleted + ' 个账号');
+        this.selectedAccounts.clear();
+        this.loadAccounts();
+      } catch (e) { this.notify('删除失败: ' + e.message); }
     },
     async loadTasks() {
       const d = await this.req('/api/tasks?limit=200' + (this.taskFilter ? '&status=' + this.taskFilter : ''));
