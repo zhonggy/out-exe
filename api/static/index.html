@@ -147,18 +147,18 @@
           <h3>运行控制</h3>
           <div class="ctrl2">
             <div class="ctrl-col">
-              <div class="row"><span class="ctrl-label">Worker 数量</span><input v-model.number="workerInput" type="number" min="1" max="16" style="width:90px" /></div>
+              <div class="row"><span class="ctrl-label">并发线程</span><input v-model.number="workerInput" type="number" min="1" max="16" style="width:90px" /></div>
               <div class="row">
-                <button class="btn primary" @click="post('/api/workers/start', {workers: workerInput})">启动 Worker</button>
+                <button class="btn primary" @click="post('/api/workers/start', {workers: workerInput})">开始运行</button>
                 <button class="btn" @click="post('/api/workers/stop')">停止</button>
                 <button class="btn" @click="post('/api/workers/restart', {workers: workerInput})">重启</button>
                 <button class="btn danger" @click="post('/api/browsers/close_all')">关闭全部浏览器</button>
               </div>
             </div>
             <div class="ctrl-col">
-              <div class="row"><span class="ctrl-label">派发数量</span><input v-model.number="batchLimit" type="number" min="1" style="width:90px" /></div>
+              <div class="row"><span class="ctrl-label">任务数量</span><input v-model.number="batchLimit" type="number" min="1" style="width:90px" /></div>
               <div class="row">
-                <button class="btn primary" @click="post('/api/tasks/batch', {limit: batchLimit, type: 'login'})">批量派发登录任务</button>
+                <button class="btn primary" @click="post('/api/tasks/batch', {limit: batchLimit, type: 'login'})">开始派发任务</button>
                 <button class="btn" @click="post('/api/queue/clear')">清空队列</button>
               </div>
             </div>
@@ -166,9 +166,9 @@
         </div>
 
         <div class="sec">
-          <h3>Worker 状态</h3>
+          <h3>线程状态</h3>
           <table>
-            <thead><tr><th>Worker</th><th>状态</th><th>处理</th><th>成功</th><th>失败</th><th>当前任务</th><th>当前账号</th></tr></thead>
+            <thead><tr><th>线程</th><th>状态</th><th>处理</th><th>成功</th><th>失败</th><th>当前任务</th><th>当前账号</th></tr></thead>
             <tbody>
               <tr v-for="w in workers" :key="w.index">
                 <td>{{ w.name }}</td>
