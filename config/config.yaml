@@ -1,0 +1,75 @@
+# OutlookAutomation 配置文件
+# 所有路径均相对项目根目录（也可写绝对路径）
+
+browser:
+  # fingerprint-chromium 内核路径（支持 --fingerprint 指纹伪装）；留空 = patchright 自带 Chromium
+  executable_path: "browsers/fingerprint-chromium/ungoogled-chromium_148.0.7778.215-1.1_windows_x64/chrome.exe"
+  headless: false
+  timeout: 60000                # 默认操作超时（毫秒）
+  nav_timeout: 45000            # 页面导航超时（毫秒）
+  locale: "zh-CN"               # 强制中文，元素定位依赖中文文案
+  # 指纹伪装（仅 fingerprint-chromium 内核支持 --fingerprint 系列参数）
+  fingerprint_enabled: true
+  fingerprint_platform: "windows"
+  fingerprint_brand: "Chrome"
+  # 随机视口候选
+  viewport_widths: [1366, 1440, 1536, 1680, 1920]
+  viewport_heights: [768, 864, 900, 1050, 1080]
+
+profile:
+  root: "profiles"              # 每个环境独立目录（cookie / localStorage / 缓存）
+  persistent: true              # true = launch_persistent_context，环境可复用
+  reuse: false                  # false = 每次任务新建临时 profile（新身份）
+  cleanup_on_exit: true         # 任务结束删除临时 profile
+
+proxy:
+  enabled: false
+  mode: "single"                # single | pool
+  type: "http"                  # http | socks5
+  host: "127.0.0.1"
+  single_port: 7890
+  port_start: 24000
+  port_end: 24064
+  max_per_proxy: 20             # 单代理最大使用次数
+  ip_info_lookup: true          # 通过 ipinfo.io 查询出口 IP 国家/时区
+  ip_info_timeout: 8
+
+flow:
+  login_url: "https://login.microsoftonline.com/"
+  max_captcha_retries: 3
+  captcha_strategy: 0           # 0=全自动按压  1=半自动(暂停等人工)
+  captcha_screenshot: true      # 验证码失败时截图到 logs/captcha/
+  wait_verify_timeout: 300      # WAIT_VERIFY 最长等待秒数
+  checkpoint_enabled: true      # 保存流程节点，支持中断恢复
+
+system:
+  max_workers: 3                # 并发 Worker 数
+  task_retry: 1                 # 单任务失败重试次数
+  accounts_file: "accounts.txt"
+  account_separator: "----"
+
+database:
+  path: "data/app.db"
+
+logger:
+  dir: "logs"
+  level: "INFO"                 # DEBUG | INFO | WARN | ERROR
+  console: true
+  file: true
+  max_bytes: 10485760           # 单日志文件 10MB 后轮转
+  backup_count: 5
+
+api:
+  enabled: true
+  host: "127.0.0.1"             # 仅监听本机，勿改为 0.0.0.0
+  port: 8000
+  auth_enabled: true            # Token 认证，首次启动自动生成 data/api_token
+  token: ""                     # 留空则自动生成并写入 data/api_token
+
+scheduler:
+  enabled: false
+  jobs: []
+    # - id: nightly_login
+    #   flow: login
+    #   cron: "0 3 * * *"
+    #   accounts: "all"
