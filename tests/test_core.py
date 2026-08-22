@@ -60,6 +60,59 @@ def test_config_dotted_and_resolve(cfg):
     assert cfg.path_of("database.path").name == "app.db"
 
 
+def test_detect_account_unblocked_priority():
+    """人机验证后的「已取消阻止你的帐户」页必须识别为放行页，而非 unknown/锁定。"""
+    from flow.detector import PageDetector
+
+    # 页面同时带安全类文案（帮助我们保护你的帐户），正是之前误判的原因
+    texts = [
+        "已取消阻止你的帐户",
+        "如果认为可能有人访问过你的帐户，请查看你的近期活动",
+        "继续",
+        "获取有关提高帐户安全性的提示",
+    ]
+    page = _FakePage(texts)
+    det = PageDetector(page)
+    assert det.is_account_unblocked() is True
+    assert det.detect() == "account_unblocked"
+
+    # 普通页不该误报
+    assert PageDetector(_FakePage(["输入密码"])).is_account_unblocked() is False
+
+
+class _FakePage:
+    """最小伪页面：只支持 detector 用到的 get_by_text/locator/url。"""
+
+    def __init__(self, texts):
+        self._texts = texts
+        self.url = "https://login.live.com/ppsecure/post.srf"
+
+    def get_by_text(self, text, exact=False):
+        hit = sum(1 for t in self._texts if text in t)
+        return _FakeLocator(hit)
+
+    def locator(self, selector):
+        return _FakeLocator(0)
+
+    def frame_locator(self, selector):
+        return self
+
+
+class _FakeLocator:
+    def __init__(self, n):
+        self._n = n
+        self.first = self
+
+    def count(self):
+        return self._n
+
+    def is_visible(self):
+        return self._n > 0
+
+    def text_content(self, timeout=None):
+        return ""
+
+
 def test_launch_no_use_before_assignment():
     """静态检查 _launch 里不存在局部变量先用后赋值（曾因 common 提前使用导致启动失败）。"""
     import ast

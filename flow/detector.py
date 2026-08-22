@@ -123,6 +123,14 @@ EMAIL_VERIFY_OFFER_TEXTS = (
     "We'll send a code",
     "We need to verify your email",
 )
+ACCOUNT_UNBLOCKED_TEXTS = (
+    "已取消阻止你的帐户",
+    "已取消阻止你的账户",
+    "已解除对你帐户的阻止",
+    "Your account has been unblocked",
+    "We've unblocked your account",
+    "Your account is unblocked",
+)
 RISK_BLOCKED_TEXTS = (
     "一些异常活动",
     "此站点正在维护",
@@ -212,7 +220,7 @@ class PageDetector:
         for sel in (
             ".identity",
             "#displaySign",
-            '#displaySign\, [data-test-id="identity"]',
+            '#displaySign, [data-test-id="identity"]',
             '[data-testid="identity"]',
             "#loginHint",
             ".table-cell .identity",
@@ -287,6 +295,10 @@ class PageDetector:
     def is_verify_required(self) -> bool:
         return any_text(self.page, VERIFY_REQUIRED_TEXTS) is not None
 
+    def is_account_unblocked(self) -> bool:
+        """人机验证通过后的「已取消阻止你的帐户」页（带「继续」按钮，点了就能往下走）。"""
+        return any_text(self.page, ACCOUNT_UNBLOCKED_TEXTS) is not None
+
     def is_risk_blocked(self) -> bool:
         return any_text(self.page, RISK_BLOCKED_TEXTS) is not None
 
@@ -317,6 +329,9 @@ class PageDetector:
         if self.has_captcha():
             # 验证码优先于风控/锁定类判定：这些页面常带“异常活动”字样但实际可按压通过
             return "captcha"
+        if self.is_account_unblocked():
+            # 验证通过后的放行页：必须先于锁定/风控判定（页面仍带安全类文案）
+            return "account_unblocked"
         if self.is_risk_blocked():
             return "risk_blocked"
         if self.is_account_not_found():
