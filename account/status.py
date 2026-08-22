@@ -41,7 +41,7 @@ _PAGE_MAP = {
         AccountStatus.FAILED.value, "IP 触发风控（异常活动/维护）", retryable=True
     ),
     "account_unblocked": StatusVerdict(
-        AccountStatus.FAILED.value, "已解除阻止但未能继续（页面未往下走）", retryable=True
+        AccountStatus.OK.value, "人机验证通过，帐户已取消阻止"
     ),
     "unknown": StatusVerdict(AccountStatus.FAILED.value, "未知页面状态", retryable=True),
 }

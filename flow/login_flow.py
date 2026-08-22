@@ -189,9 +189,8 @@ class LoginFlow(BaseFlow):
             return self._handle_wait_verify(account, password, depth)
 
         if state == "account_unblocked":
-            # 验证通过后的放行页：点「继续」往下走
-            nxt = self._continue_unblocked()
-            return self._handle_state(nxt, account, password, depth + 1)
+            # 人机验证通过、帐户已解除阻止：任务目标已达成，直接判定成功
+            return self._success("人机验证通过，帐户已取消阻止")
 
         if state in ("kmsi", "passkey", "protect_account"):
             # 非阻塞拦截页：关掉继续
@@ -361,20 +360,6 @@ class LoginFlow(BaseFlow):
             if self.log:
                 self.log.warn("lookup_error", f"第 {i + 1} 次重试后仍失败（state={state}）")
         return None
-
-    def _continue_unblocked(self) -> str:
-        """「已取消阻止你的帐户」页：点「继续」回到登录流程。"""
-        if self.log:
-            self.log.info("unblocked", "帐户已解除阻止，点继续")
-        clicked = self.action.click_text(
-            ("继续", "Continue", "下一步", "Next"), timeout_ms=5000
-        )
-        if not clicked:
-            self.action.submit_primary()
-        self.action.wait_random(1500, 2500)
-        return self.detector.wait_for_any(
-            list(_ENTRY_STATES), timeout_ms=30000, ignore=["account_unblocked"]
-        )
 
     def _dismiss_intercept(self, state: str) -> bool:
         """处理 KMSI / Passkey / 保护帐户 三类拦截页。"""
