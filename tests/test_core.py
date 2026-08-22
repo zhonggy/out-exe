@@ -451,6 +451,21 @@ def test_resin_inherit_lease_request():
     assert body == {"parent_account": "temp-abc", "new_account": "tom"}
 
 
+def test_resin_forward_proxy_url_embeds_credentials():
+    """requests 用的代理 URL 必须内嵌凭证（auth= 参数不作用于代理，会得 407）。"""
+    r = Resin({"enabled": True, "url": "http://127.0.0.1:2260/my-token", "platform": "Default"})
+    assert r.forward_proxy_url("tom@mail.com") == "http://Default.tom:my-token@127.0.0.1:2260"
+
+    # 完整邮箱模式：@ 必须百分号转义，否则 netloc 解析错位
+    r2 = Resin({"enabled": True, "url": "http://h:1/t", "platform": "P", "identity_mode": "email"})
+    url = r2.forward_proxy_url("tom@mail.com")
+    assert url == "http://P.tom%40mail.com:t@h:1"
+    from urllib.parse import urlparse, unquote
+    assert urlparse(url).hostname == "h"                      # 不会把 mail.com 当主机
+    assert unquote(urlparse(url).username) == "P.tom@mail.com"  # 反解后仍是原始凭证
+    assert r2.forward_proxy_url("") is None
+
+
 def test_resin_test_connection_guard():
     """未启用/未配置时测试接口直接返回失败，不发请求。"""
     off = Resin({"enabled": False, "url": "http://h:1/t"})

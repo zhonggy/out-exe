@@ -59,6 +59,23 @@ class Resin:
         return account.split("@", 1)[0]
 
     # ---------- 正向代理（浏览器用） ----------
+    def forward_proxy_url(self, account: str) -> Optional[str]:
+        """生成 requests/httpx 用的带凭证代理 URL：`scheme://Platform.Account:Token@host:port`。
+
+        requests 的 auth= 参数是给目标站的，不会用于 CONNECT 隔壁认证（会得 407），
+        代理凭证必须内嵌在 URL 里。Account 可含 @ . 等字符，故做 percent-encode；
+        requests 会先 unquote 再组 Basic 头，Resin 收到的仍是原始 `Platform.Account:Token`。
+        """
+        opt = self.forward_proxy_option(account)
+        if not opt:
+            return None
+        from urllib.parse import quote
+
+        parsed = urlparse(opt["server"])
+        user = quote(opt["username"], safe="")
+        pwd = quote(opt["password"], safe="")
+        return f"{parsed.scheme}://{user}:{pwd}@{parsed.netloc}"
+
     def forward_proxy_option(self, account: str) -> Optional[Dict[str, str]]:
         """生成 Playwright 的 proxy 参数。未启用返回 None。
 
@@ -160,8 +177,8 @@ class Resin:
 
         account = "test" + "".join(random.choices(string.ascii_lowercase + string.digits, k=6))
         opt = self.forward_proxy_option(account)
-        proxies = {"http": opt["server"], "https": opt["server"]}
-        auth = (opt["username"], opt["password"])
+        proxy_url = self.forward_proxy_url(account)
+        proxies = {"http": proxy_url, "https": proxy_url}
 
         ips, parts = [], []
         for i in range(2):
@@ -169,7 +186,6 @@ class Resin:
                 r = requests.get(
                     "https://ipinfo.io/json",
                     proxies=proxies,
-                    auth=auth,
                     timeout=timeout,
                     headers={"Accept": "application/json"},
                 )
