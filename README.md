@@ -10,9 +10,17 @@
 ```bash
 pip install -r requirements.txt
 patchright install chromium
+python scripts/setup_browser.py    # 下载 fingerprint-chromium 指纹内核（约 180MB，自动写入配置）
 
 python main.py doctor              # 环境自检
 ```
+
+> 指纹内核（fingerprint-chromium）体积大不入仓库。`setup_browser.py` 会从官方 Releases
+> 自动下载、解压到 `browsers/fingerprint-chromium/` 并写好配置；国内网络会自动探测本机
+> 代理端口（7897/7890/10809）。也可以手动从
+> [Releases](https://github.com/adryfish/fingerprint-chromium/releases) 下载 Windows x64 zip
+> 解压后把 chrome.exe 路径填到 config.yaml 的 `browser.executable_path`。
+> 不想用指纹内核则清空 `executable_path` 并设 `fingerprint_enabled: false`。
 
 创建 `accounts.txt`（每行一条，默认分隔符 `----`）：
 
