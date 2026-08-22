@@ -68,6 +68,34 @@ def test_config_env_override(monkeypatch):
     assert c.get("browser.headless") is True
 
 
+def test_config_broken_yaml_falls_back(tmp_path, capsys):
+    """配置文件语法错误：回退默认值启动，不崩溃。"""
+    bad = tmp_path / "config.yaml"
+    bad.write_text("browser:\n  headless: true\n  bad_indent:\n x: 1\n", encoding="utf-8")
+    c = load_config(str(bad), use_cache=False)
+    assert c.get("system.max_workers") >= 1      # 默认值兜底
+    assert c.source_path is None                  # 标记为未加载源文件
+    out = capsys.readouterr().out
+    assert "配置错误" in out
+
+
+def test_config_update_deep_merge_and_save(tmp_path):
+    cfg_file = tmp_path / "c.yaml"
+    from config import Config
+
+    c = Config({"browser": {"headless": False, "timeout": 60000}, "resin": {"enabled": False}}, cfg_file)
+    path = c.update({"browser": {"headless": True}, "resin": {"enabled": True, "url": "http://h:1/t/"}})
+    assert path.is_file()
+    # 深合并：只改了 headless，timeout 保留；resin 整段合入
+    assert c.get("browser.timeout") == 60000
+    assert c.get("browser.headless") is True
+    assert c.get("resin.url") == "http://h:1/t/"
+    # 落盘后重新解析一致（程序生成的 YAML 必然合法）
+    import yaml
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert data["browser"]["timeout"] == 60000
+
+
 # ---------- 数据库 ----------
 def test_account_crud(db):
     acc_id = db.upsert_account("a@example.com", "pw1")

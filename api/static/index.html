@@ -314,6 +314,20 @@
         </div>
       </section>
 
+      <!-- 配置 -->
+      <section v-show="tab==='cfg'">
+        <div class="warnbox">
+          以 JSON 格式编辑，保存时自动生成合法 YAML（避免手改语法错误）。
+          api.token 不可在此修改；改动 resin/proxy 等运行参数后需重启 Worker 生效。
+        </div>
+        <div class="row">
+          <button class="btn" @click="loadCfg">重新加载</button>
+          <button class="btn primary" @click="saveCfg">保存配置</button>
+          <span class="muted" v-if="cfgPath">{{ cfgPath }}</span>
+        </div>
+        <textarea v-model="cfgText" spellcheck="false" style="min-height:480px;font-size:12px"></textarea>
+      </section>
+
       <!-- 日志 -->
       <section v-show="tab==='log'">
         <div class="row">
@@ -338,7 +352,7 @@ createApp({
     return {
       tabs: [
         {k:'dash', n:'概览'}, {k:'acc', n:'账号'}, {k:'task', n:'任务'},
-        {k:'env', n:'浏览器/代理'}, {k:'log', n:'日志'}
+        {k:'env', n:'浏览器/代理'}, {k:'log', n:'日志'}, {k:'cfg', n:'配置'}
       ],
       tab: 'dash',
       token: localStorage.getItem('oa_token') || '',
@@ -353,7 +367,9 @@ createApp({
       toast: '', lastUpdate: '',
       accStatuses: ['NEW','PENDING','RUNNING','OK','WAIT_VERIFY','PASSWORD_WRONG','LOCKED','NOT_FOUND','FAILED','SKIPPED'],
       taskStatuses: ['CREATED','QUEUED','RUNNING','COMPLETED','FAILED','CANCELLED'],
-      timer: null
+      timer: null,
+      cfgText: '',
+      cfgPath: ''
     };
   },
   computed: {
@@ -417,6 +433,28 @@ createApp({
       this.authEnabled = m.auth_enabled;
       if (!m.auth_enabled) this.authOk = true;
     },
+    async loadCfg() {
+      const d = await this.req('/api/config');
+      this.cfgPath = d.path || '';
+      this.cfgText = JSON.stringify(d.config !== undefined ? d.config : d, null, 2);
+    },
+    async saveCfg() {
+      let data;
+      try {
+        data = JSON.parse(this.cfgText);
+      } catch (e) {
+        return this.notify('JSON 格式错误：' + e.message);
+      }
+      try {
+        const r = await this.req('/api/config', { method: 'PUT', body: JSON.stringify({data}) });
+        this.cfgPath = r.path;
+        this.cfgText = JSON.stringify(r.config, null, 2);
+        this.notify('配置已保存。涉及运行参数的改动需重启 Worker 生效');
+      } catch (e) {
+        this.notify('保存失败: ' + e.message);
+      }
+    },
+
     async loadStats() {
       const s = await this.req('/api/stats');
       this.stats = s; this.authOk = true;
@@ -496,6 +534,7 @@ createApp({
         if (this.tab === 'task') this.loadTasks().catch(() => {});
         if (this.tab === 'acc') this.loadAccounts().catch(() => {});
         if (this.tab === 'env') this.loadEnv().catch(() => {});
+      if (this.tab === 'cfg' && !this.cfgText) this.loadCfg().catch(() => {});
       }
     }
   },

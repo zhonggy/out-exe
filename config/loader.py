@@ -178,6 +178,16 @@ class Config:
     def as_dict(self) -> Dict[str, Any]:
         return copy.deepcopy(self._data)
 
+    def update(self, partial: Dict[str, Any], save: bool = True) -> Path:
+        """深合并更新配置（partial 只需包含要改的键），默认持久化到源文件。
+
+        程序生成 YAML，避免手改语法错误。返回写入路径。
+        """
+        self._data = _deep_merge(self._data, partial)
+        if save:
+            return self.save()
+        return self._path or DEFAULT_CONFIG_PATH
+
     # ---------- 路径 ----------
     @property
     def root(self) -> Path:
@@ -228,13 +238,24 @@ def load_config(path: Optional[str | Path] = None, use_cache: bool = True) -> Co
     cfg_path = Path(path) if path else DEFAULT_CONFIG_PATH
     raw: Dict[str, Any] = {}
     if cfg_path.is_file():
-        with open(cfg_path, "r", encoding="utf-8") as fh:
-            loaded = yaml.safe_load(fh)
-            if isinstance(loaded, dict):
-                raw = loaded
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as fh:
+                loaded = yaml.safe_load(fh)
+                if isinstance(loaded, dict):
+                    raw = loaded
+        except yaml.YAMLError as exc:
+            # 配置文件语法错误：回退默认值并大声告警，让面板至少能启动、
+            # 用户可通过网页配置页重写合法配置
+            print(f"=" * 60)
+            print(f"[配置错误] {cfg_path} 解析失败，已回退内置默认配置！")
+            print(f"  原因: {exc}")
+            print(f"  可在网页面板「配置」页重新设置并保存，或执行:")
+            print(f"  git checkout -- config/config.yaml")
+            print(f"=" * 60)
 
     merged = _apply_env_overrides(_deep_merge(_DEFAULTS, raw))
-    cfg = Config(merged, cfg_path if cfg_path.is_file() else None)
+    # 源文件不存在或解析失败（raw 为空）时置 None：表示当前生效的是默认配置
+    cfg = Config(merged, cfg_path if raw else None)
 
     if use_cache and path is None:
         with _lock:

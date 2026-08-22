@@ -68,6 +68,10 @@ class WorkersIn(BaseModel):
     restore: bool = True
 
 
+class ConfigIn(BaseModel):
+    data: Dict[str, Any]
+
+
 # ---------- 独立执行进程管理（OutlookRegister 模式） ----------
 def _pid_alive(pid: int) -> bool:
     """检查进程是否存活（不等待、不发信号）。"""
@@ -510,6 +514,29 @@ def create_app(cfg=None) -> FastAPI:
         if "api" in data:
             data["api"] = {**data["api"], "token": "***"}
         return data
+
+    @app.put("/api/config", dependencies=guard)
+    def update_config(body: ConfigIn):
+        """网页改配置：深合并保存为合法 YAML。token 不可经此接口修改。"""
+        data = body.data or {}
+        if not isinstance(data, dict):
+            raise HTTPException(status_code=400, detail="data 必须是对象")
+        if "resin" in data and isinstance(data["resin"], dict) and data["resin"].get("url"):
+            # 去掉尾部斜杠，保持与 Resin 解析约定一致
+            data["resin"]["url"] = str(data["resin"]["url"]).strip().rstrip("/")
+        if isinstance(data.get("api"), dict):
+            token_in = data["api"].pop("token", None)
+            if token_in not in (None, "", "***"):
+                raise HTTPException(status_code=400, detail="api.token 请直接编辑 data/api_token 文件修改")
+            if not data["api"]:
+                data.pop("api")
+        path = cfg.update(data, save=True)
+        # 让进程内单例感知变更（代理池/执行子进程下次启动时读取新文件）
+        log.info("config_update", f"配置已更新并保存: {path}")
+        out: Dict[str, Any] = cfg.as_dict()
+        if "api" in out:
+            out["api"] = {**out["api"], "token": "***"}
+        return {"ok": True, "path": str(path), "config": out}
 
     @app.get("/api/healthz", include_in_schema=False)
     def healthz():
