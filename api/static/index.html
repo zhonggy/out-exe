@@ -193,7 +193,7 @@
           <button class="btn" @click="loadAccounts">刷新</button>
           <button class="btn primary" @click="post('/api/accounts/import').then(loadAccounts)">从 accounts.txt 导入</button>
           <a class="btn" :href="exportUrl" target="_blank" style="text-decoration:none">导出 CSV</a>
-          <button class="btn danger" @click="deleteSelected" :disabled="!selectedAccounts.size">删除选中（{{ selectedAccounts.size }}）</button>
+          <button class="btn danger" @click="deleteSelected" :disabled="!selectedAccounts.length">删除选中（{{ selectedAccounts.length }}）</button>
         </div>
         <div class="grid2 sec">
           <div>
@@ -216,8 +216,8 @@
             <th>ID</th><th>账号</th><th>状态</th><th>备注</th><th>执行</th><th>失败</th><th>操作</th>
           </tr></thead>
           <tbody>
-            <tr v-for="a in accounts" :key="a.id" :class="{'sel-row': selectedAccounts.has(a.account)}">
-              <td><input type="checkbox" v-model="selectedAccounts" :value="a.account" /></td>
+            <tr v-for="a in accounts" :key="a.id" :class="{'sel-row': isSelected(a.account)}">
+              <td><input type="checkbox" :checked="isSelected(a.account)" @change="toggleSelect(a.account, $event.target.checked)" /></td>
               <td>{{ a.id }}</td><td>{{ a.account }}</td>
               <td><span class="st" :class="a.status">{{ a.status_label || a.status }}</span></td>
               <td class="muted">{{ a.note }}</td><td>{{ a.run_count }}</td><td>{{ a.fail_count }}</td>
@@ -417,7 +417,7 @@ createApp({
       stats: {}, accounts: [], tasks: [], browsers: [], profiles: {}, proxy: {},
       logs: [], logCursor: 0, logLevel: '', autoScroll: true,
       accFilter: '', taskFilter: '', importText: '', taskDetail: null,
-      selectedAccounts: new Set(),
+      selectedAccounts: [],
       newAcc: { account: '', password: '' },
       workerInput: 3, batchLimit: 20,
       toast: '', lastUpdate: '',
@@ -540,34 +540,43 @@ createApp({
       this.accounts = d.items;
       // 过滤后清理选中项：只保留仍在列表中的（防止跨状态误删）
       const alive = new Set(this.accounts.map(a => a.account));
-      for (const acc of [...this.selectedAccounts]) {
-        if (!alive.has(acc)) this.selectedAccounts.delete(acc);
-      }
+      this.selectedAccounts = this.selectedAccounts.filter(acc => alive.has(acc));
     },
     onAccFilterChange() {
-      this.selectedAccounts.clear();
+      this.selectedAccounts = [];
       this.loadAccounts();
     },
+    isSelected(acc) {
+      return this.selectedAccounts.indexOf(acc) >= 0;
+    },
+    toggleSelect(acc, checked) {
+      const arr = this.selectedAccounts.slice();
+      const idx = arr.indexOf(acc);
+      if (checked && idx < 0) arr.push(acc);
+      if (!checked && idx >= 0) arr.splice(idx, 1);
+      this.selectedAccounts = arr;
+    },
     allChecked() {
-      return this.accounts.length > 0 && this.accounts.every(a => this.selectedAccounts.has(a.account));
+      return this.accounts.length > 0 && this.accounts.every(a => this.isSelected(a.account));
     },
     toggleAll() {
       if (this.allChecked) {
-        for (const a of this.accounts) this.selectedAccounts.delete(a.account);
+        const alive = new Set(this.accounts.map(a => a.account));
+        this.selectedAccounts = this.selectedAccounts.filter(acc => !alive.has(acc));
       } else {
-        for (const a of this.accounts) this.selectedAccounts.add(a.account);
+        const set = new Set(this.selectedAccounts);
+        for (const a of this.accounts) set.add(a.account);
+        this.selectedAccounts = [...set];
       }
-      // 触发响应式更新
-      this.selectedAccounts = new Set(this.selectedAccounts);
     },
     async deleteSelected() {
-      const list = [...this.selectedAccounts];
+      const list = this.selectedAccounts.slice();
       if (!list.length) return;
       if (!confirm('确定删除选中的 ' + list.length + ' 个账号？删除后不可恢复')) return;
       try {
         const r = await this.req('/api/accounts/batch_delete', { method: 'POST', body: JSON.stringify({accounts: list}) });
         this.notify('已删除 ' + r.deleted + ' 个账号');
-        this.selectedAccounts.clear();
+        this.selectedAccounts = [];
         this.loadAccounts();
       } catch (e) { this.notify('删除失败: ' + e.message); }
     },
