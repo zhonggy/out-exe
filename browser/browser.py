@@ -77,11 +77,27 @@ class BrowserSession:
         browser_cfg = self.cfg.section("browser")
         locale = str(browser_cfg.get("locale") or "zh-CN")
 
-        # 1) 代理与地区信息。直连时不做时区/地理位置伪装，
-        #    完全跟随本机真实环境（伪装与真实环境矛盾是典型机器人特征）
+        # 1) 代理与地区信息
+        #    优先级：Resin 粘性代理（按账号身份） > 普通代理池 > 直连（无伪装）
         info: Dict[str, Any] = {}
         using_proxy = False
-        if self.proxy_manager is not None:
+        from proxy.resin import get_resin
+
+        resin = get_resin()
+        if resin.usable and self.account:
+            # Resin 正向代理：认证用户名 Platform.Account，粘性 IP 绑定账号身份
+            proxy_opt = resin.forward_proxy_option(self.account)
+            if proxy_opt is None:
+                raise BrowserLaunchError(
+                    f"Resin 已启用但无法为账号 {self.account} 构造代理身份"
+                )
+            self.proxy_url = f"resin://{resin.platform}.{resin.account_identity(self.account)}"
+            self._resin_account_identity = resin.account_identity(self.account)
+            common["proxy"] = proxy_opt
+            using_proxy = True
+            # 出口信息走 Resin 反向代理查询（带 X-Resin-Account 头）
+            info = resin.lookup_exit_info(self.account)
+        elif self.proxy_manager is not None:
             self.proxy_url = self.proxy_manager.pick()
             using_proxy = bool(self.proxy_url)
             if using_proxy:
@@ -114,9 +130,10 @@ class BrowserSession:
             "headless": bool(browser_cfg.get("headless", False)),
             "args": args,
         }
-        proxy_opt = build_proxy_option(self.proxy_url)
-        if proxy_opt:
-            common["proxy"] = proxy_opt
+        if not using_proxy:
+            proxy_opt = build_proxy_option(self.proxy_url)
+            if proxy_opt:
+                common["proxy"] = proxy_opt
 
         executable_path = str(browser_cfg.get("executable_path") or "").strip()
         if executable_path:

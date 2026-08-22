@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from database import (
 from flow import CheckpointManager, list_flows
 from flow.captcha import CaptchaSolver, reset_stats, stats_snapshot
 from proxy import ProxyConfig, ProxyManager, resolve_geolocation, resolve_timezone
+from proxy.resin import Resin, get_resin, reset_resin
 from task import TaskQueue
 
 
@@ -363,6 +365,72 @@ def test_captcha_b2_mode_and_stats():
     assert snap["b2_modes"]["click"]["attempts"] == 6
     reset_stats()
     assert stats_snapshot()["attempts"] == 0
+
+
+# ---------- Resin 粘性代理池 ----------
+def test_resin_parse_url_and_credentials():
+    r = Resin({"enabled": True, "url": "http://127.0.0.1:2260/my-token", "platform": "Default"})
+    assert r.usable
+    assert r.server == "http://127.0.0.1:2260"
+    assert r.token == "my-token"
+
+    # 正向代理认证：Platform.Account:Token（Account 用邮箱前缀，默认）
+    opt = r.forward_proxy_option("tom@mail.com")
+    assert opt == {
+        "server": "http://127.0.0.1:2260",
+        "username": "Default.tom",
+        "password": "my-token",
+    }
+
+    # identity_mode=email：完整邮箱作为 Account（含 @ . 安全，Resin 按第一个.最后一个:分割）
+    r2 = Resin({"enabled": True, "url": "http://h:1/t", "platform": "P", "identity_mode": "email"})
+    assert r2.forward_proxy_option("tom@mail.com")["username"] == "P.tom@mail.com"
+
+
+def test_resin_reverse_proxy():
+    r = Resin({"enabled": True, "url": "http://127.0.0.1:2260/my-token", "platform": "Default"})
+    # 规范：<resin_url>/Platform/protocol/host/path?query
+    url = r.reverse_url("https://api.example.com/healthz?q=1", "Tom")
+    assert url == "http://127.0.0.1:2260/my-token/Default/https/api.example.com/healthz?q=1"
+    assert r.reverse_headers("Tom@mail.com") == {"X-Resin-Account": "Tom"}
+
+    # ws/wss 目标必须映射 http/https
+    assert "/Default/https/ws.example.com/chat" in r.reverse_url("wss://ws.example.com/chat", "Tom")
+    import pytest
+    with pytest.raises(ValueError):
+        r.reverse_url("ftp://x.com/a", "Tom")
+
+
+def test_resin_disabled_and_identity_stability():
+    off = Resin({"enabled": False, "url": "http://h:1/t"})
+    assert not off.usable
+    assert off.forward_proxy_option("a@b.com") is None
+
+    r = Resin({"enabled": True, "url": "http://h:1/t", "identity_mode": "email_prefix"})
+    # 同一账号标识稳定（多次调用一致）
+    assert r.account_identity("Tom@mail.com") == r.account_identity("Tom@mail.com") == "Tom"
+    # 无 @ 的账号原样使用
+    assert r.account_identity("plainname") == "plainname"
+    # 非法 identity_mode 回退默认
+    r2 = Resin({"enabled": True, "url": "http://h:1/t", "identity_mode": "bad"})
+    assert r2.identity_mode == "email_prefix"
+
+
+def test_resin_inherit_lease_request():
+    r = Resin({"enabled": True, "url": "http://127.0.0.1:2260/my-token", "platform": "Default"})
+    url, body = r.build_inherit_request("temp-abc", "tom")
+    assert url == "http://127.0.0.1:2260/my-token/api/v1/Default/actions/inherit-lease"
+    assert body == {"parent_account": "temp-abc", "new_account": "tom"}
+
+
+def test_resin_singleton_and_snapshot(tmp_path):
+    reset_resin()
+    r = get_resin({"enabled": True, "url": "http://h:1/token", "platform": "MyPlat"})
+    assert get_resin() is r  # 单例
+    snap = r.snapshot()
+    assert snap["enabled"] is True and snap["platform"] == "MyPlat"
+    assert "token" not in json.dumps(snap)  # 不泄露 token
+    reset_resin()
 
 
 # ---------- 流程注册 ----------

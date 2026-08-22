@@ -34,6 +34,14 @@ proxy:
   ip_info_lookup: true          # 通过 ipinfo.io 查询出口 IP 国家/时区
   ip_info_timeout: 8
 
+# Resin 外部粘性代理池（启用后优先于上方 proxy 段）
+# 启用后：浏览器走正向代理（Platform.Account 认证），框架自身 API 请求走反向代理（X-Resin-Account 头）
+resin:
+  enabled: false
+  url: "http://127.0.0.1:2260/my-token"   # 代理基础地址 + Token
+  platform: "Default"                      # 业务平台名（X-Resin-Account / 认证用户名前段）
+  identity_mode: "email_prefix"            # 账号标识：email_prefix=@前缀 | email=完整邮箱（登录前稳定标识）
+
 flow:
   login_url: "https://login.microsoftonline.com/"
   max_captcha_retries: 3

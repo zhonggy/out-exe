@@ -53,6 +53,12 @@ _DEFAULTS: Dict[str, Any] = {
         "ip_info_lookup": True,
         "ip_info_timeout": 8,
     },
+    "resin": {
+        "enabled": False,
+        "url": "",
+        "platform": "Default",
+        "identity_mode": "email_prefix",
+    },
     "flow": {
         "login_url": "https://login.live.com/",
         "max_captcha_retries": 3,

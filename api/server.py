@@ -478,7 +478,11 @@ def create_app(cfg=None) -> FastAPI:
     # ---------- 代理 ----------
     @app.get("/api/proxy", dependencies=guard)
     def proxy_info():
-        return proxy_mgr.snapshot()
+        from proxy import get_resin
+
+        data = proxy_mgr.snapshot()
+        data["resin"] = get_resin().snapshot()
+        return data
 
     @app.post("/api/proxy/reset", dependencies=guard)
     def proxy_reset():

@@ -123,6 +123,43 @@ CREATED → BROWSER_STARTED → LOGIN_PAGE → USERNAME_INPUT → PASSWORD_INPUT
 需要短信/邮件验证码这类无法自动化的验证时，流程进入 `WAIT_VERIFY`，
 等待人工在浏览器窗口完成（最长 `flow.wait_verify_timeout` 秒），完成后自动继续。
 
+## 代理配置
+
+### 方式一：Resin 粘性代理池（推荐，按账号身份粘性）
+
+```yaml
+resin:
+  enabled: true
+  url: "http://127.0.0.1:2260/my-token"   # Resin 基础地址 + Token
+  platform: "Default"                      # 业务平台名
+  identity_mode: "email_prefix"            # 账号标识：email_prefix | email
+```
+
+启用后的行为：
+
+- **浏览器（正向代理）**：每个账号的浏览器会话走 `Platform.Account:Token` 认证的正向代理，
+  同一账号始终获得同一出口 IP（粘性）。Account 标识默认取邮箱前缀 —— 登录前就稳定存在，
+  全生命周期一致；改 `identity_mode: email` 则用完整邮箱。
+- **框架自身 API 请求（反向代理）**：如 ipinfo 出口查询，走
+  `<resin_url>/Platform/https/ipinfo.io/...` 并携带 `X-Resin-Account` 头，确保查询的就是该账号真实出口。
+- 时区/地理位置随该账号出口 IP 自动匹配。
+- 租约继承接口已内置（`Resin.inherit_lease`），供未来需要临时身份→稳定身份过湾的场景使用。
+- 状态查看：面板「浏览器/代理」页或 `GET /api/proxy` 的 `resin` 字段（不含 Token）。
+
+### 方式二：普通端口池 / 单端口代理
+
+```yaml
+proxy:
+  enabled: true
+  mode: single        # single 单端口 / pool 端口池（port_start~port_end）
+  type: http
+  host: "127.0.0.1"
+  single_port: 7890
+```
+
+端口池模式下框架自动追踪每个端口的成功率：连续失败的 IP 拉黑、成功多的 IP 加权优先。
+注意：`resin.enabled=true` 时 resin 优先生效，此段被忽略。
+
 ## 配置要点
 
 `config/config.yaml` 全部参数可用环境变量覆盖，格式 `OA_<SECTION>__<KEY>`：
