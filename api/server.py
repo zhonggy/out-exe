@@ -498,6 +498,50 @@ def create_app(cfg=None) -> FastAPI:
         url = proxy_mgr.pick()
         return {"proxy": url or "direct", "info": proxy_mgr.context_info(url)}
 
+    # ---------- Resin 粘性代理 ----------
+    @app.get("/api/resin", dependencies=guard)
+    def resin_info():
+        from proxy import get_resin
+
+        r = get_resin()
+        return {
+            "config": {
+                "enabled": r.enabled,
+                "url": r.url,
+                "platform": r.platform,
+                "identity_mode": r.identity_mode,
+            },
+            "snapshot": r.snapshot(),
+        }
+
+    @app.put("/api/resin", dependencies=guard)
+    def resin_save(body: ConfigIn):
+        """保存 Resin 配置（只接受 resin 段），立即生效（重置单例）。"""
+        from proxy import reset_resin
+
+        data = (body.data or {}).get("resin")
+        if not isinstance(data, dict):
+            raise HTTPException(status_code=400, detail="data.resin 必须是对象")
+        allowed = {k: data[k] for k in ("enabled", "url", "platform", "identity_mode") if k in data}
+        if "url" in allowed:
+            allowed["url"] = str(allowed["url"]).strip().rstrip("/")
+        cfg.update({"resin": allowed}, save=True)
+        reset_resin()
+        from proxy import get_resin
+
+        r = get_resin()
+        log.info("resin_save", f"Resin 配置已保存 enabled={r.enabled}")
+        return {"ok": True, "snapshot": r.snapshot()}
+
+    @app.post("/api/resin/test", dependencies=guard)
+    def resin_test():
+        """连通性 + 粘性测试：临时 Account 连续两次查出口 IP。"""
+        from proxy import get_resin, reset_resin
+
+        reset_resin()  # 用最新配置
+        r = get_resin()
+        return r.test_connection()
+
     # ---------- 日志 / 配置 ----------
     @app.get("/api/logs", dependencies=guard)
     def logs(after: int = 0, limit: int = Query(200, le=2000), level: Optional[str] = None):

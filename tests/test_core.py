@@ -451,6 +451,16 @@ def test_resin_inherit_lease_request():
     assert body == {"parent_account": "temp-abc", "new_account": "tom"}
 
 
+def test_resin_test_connection_guard():
+    """未启用/未配置时测试接口直接返回失败，不发请求。"""
+    off = Resin({"enabled": False, "url": "http://h:1/t"})
+    r = off.test_connection()
+    assert r["ok"] is False and "未启用" in r["detail"]
+
+    no_token = Resin({"enabled": True, "url": "http://127.0.0.1:2260"})
+    assert no_token.test_connection()["ok"] is False
+
+
 def test_resin_singleton_and_snapshot(tmp_path):
     reset_resin()
     r = get_resin({"enabled": True, "url": "http://h:1/token", "platform": "MyPlat"})

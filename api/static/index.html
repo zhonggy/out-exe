@@ -87,6 +87,17 @@
            border-radius: var(--radius); padding: 16px; }
   .ctrl-col { display: flex; flex-direction: column; gap: 10px; }
   .ctrl-label { color: var(--muted); font-size: 13px; }
+  .resinbox { background: var(--panel); border: 1px solid var(--line);
+              border-radius: var(--radius); padding: 16px;
+              display: flex; flex-direction: column; gap: 12px; max-width: 760px; }
+  .chk-row { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+  .chk-row input { margin-top: 3px; }
+  .chk-row .hint { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { color: var(--muted); font-size: 12px; }
+  .field input, .field select { width: 100%; }
+  .field2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 700px) { .field2 { grid-template-columns: 1fr; } }
   @media (max-width: 800px) { .ctrl2 { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -294,6 +305,44 @@
           </table>
         </div>
         <div class="sec">
+          <h3>Resin 粘性代理池</h3>
+          <div class="resinbox">
+            <label class="chk-row">
+              <input type="checkbox" v-model="resin.enabled" />
+              <div>
+                <strong>启用 Resin 代理</strong>
+                <span class="hint">开启后浏览器走正向代理（Platform.Account 认证），框架 API 请求走反向代理；同一账号固定出口 IP</span>
+              </div>
+            </label>
+            <div class="field">
+              <label>Resin URL（含 Token）</label>
+              <input v-model="resin.url" placeholder="http://127.0.0.1:2260/my-token" />
+            </div>
+            <div class="field2">
+              <div class="field">
+                <label>Platform</label>
+                <input v-model="resin.platform" placeholder="Default" />
+              </div>
+              <div class="field">
+                <label>账号标识（Account）</label>
+                <select v-model="resin.identity_mode">
+                  <option value="email_prefix">邮箱前缀（推荐）</option>
+                  <option value="email">完整邮箱</option>
+                </select>
+              </div>
+            </div>
+            <div class="row" style="margin:4px 0 0">
+              <button class="btn primary" @click="saveResin">保存</button>
+              <button class="btn" @click="testResin" :disabled="resinTesting">
+                {{ resinTesting ? '测试中...' : '测试连接' }}
+              </button>
+              <span class="st" :class="resinBadge" v-if="resinStatus">{{ resinStatus }}</span>
+            </div>
+            <p class="muted" v-if="resinDetail" style="margin:6px 0 0;font-size:12px">{{ resinDetail }}</p>
+          </div>
+        </div>
+
+        <div class="sec">
           <h3>代理表现</h3>
           <div class="row">
             <span class="badge">{{ proxy.direct ? '直连模式' : proxy.type + '://' + proxy.host + ' × ' + proxy.ports }}</span>
@@ -369,7 +418,9 @@ createApp({
       taskStatuses: ['CREATED','QUEUED','RUNNING','COMPLETED','FAILED','CANCELLED'],
       timer: null,
       cfgText: '',
-      cfgPath: ''
+      cfgPath: '',
+      resin: { enabled: false, url: '', platform: 'Default', identity_mode: 'email_prefix' },
+      resinStatus: '', resinDetail: '', resinTesting: false, resinOk: null
     };
   },
   computed: {
@@ -384,6 +435,11 @@ createApp({
       return c.rate + '% (' + c.success + '/' + c.attempts + ')';
     },
     exportUrl() { return '/api/accounts/export'; },
+    resinBadge() {
+      if (this.resinOk === true) return 'OK';
+      if (this.resinOk === false) return 'FAILED';
+      return 'RUNNING';
+    },
     filteredLogs() {
       return this.logLevel ? this.logs.filter(l => l.level === this.logLevel) : this.logs;
     }
@@ -473,6 +529,39 @@ createApp({
       this.browsers = (await this.req('/api/browsers')).items;
       this.profiles = await this.req('/api/profiles');
       this.proxy = await this.req('/api/proxy');
+      const r = await this.req('/api/resin');
+      this.resin = Object.assign({enabled: false, url: '', platform: 'Default', identity_mode: 'email_prefix'}, r.config);
+    },
+    async saveResin() {
+      try {
+        await this.req('/api/resin', { method: 'PUT', body: JSON.stringify({data: {resin: this.resin}}) });
+        this.notify('Resin 配置已保存（重启 Worker 后对新任务生效）');
+        this.resinStatus = ''; this.resinDetail = ''; this.resinOk = null;
+        await this.loadEnv();
+      } catch (e) { this.notify('保存失败: ' + e.message); }
+    },
+    async testResin() {
+      this.resinTesting = true;
+      this.resinStatus = ''; this.resinDetail = ''; this.resinOk = null;
+      try {
+        // 先保存再测，避免测的是旧配置
+        await this.req('/api/resin', { method: 'PUT', body: JSON.stringify({data: {resin: this.resin}}) });
+        const r = await this.req('/api/resin/test', { method: 'POST' });
+        this.resinOk = !!r.ok;
+        if (r.ok) {
+          this.resinStatus = r.sticky ? '连通，粘性 OK' : '连通，但粘性异常';
+          this.resinOk = !!r.sticky;
+        } else {
+          this.resinStatus = '失败';
+        }
+        this.resinDetail = r.detail || '';
+      } catch (e) {
+        this.resinOk = false;
+        this.resinStatus = '失败';
+        this.resinDetail = e.message;
+      } finally {
+        this.resinTesting = false;
+      }
     },
     async loadLogs() {
       const d = await this.req('/api/logs?limit=300&after=' + this.logCursor);

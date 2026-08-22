@@ -148,6 +148,54 @@ class Resin:
         _exit_cache_put(account, info)
         return info
 
+    # ---------- 连通性测试 ----------
+    def test_connection(self, timeout: int = 10) -> Dict[str, Any]:
+        """同临时 Account 连续两次经正向代理查 ipinfo：验证连通 + 粘性。"""
+        if not self.usable:
+            return {"ok": False, "detail": "Resin 未启用或 URL 未配置（格式: http://host:port/token）"}
+        import random
+        import string
+
+        import requests
+
+        account = "test" + "".join(random.choices(string.ascii_lowercase + string.digits, k=6))
+        opt = self.forward_proxy_option(account)
+        proxies = {"http": opt["server"], "https": opt["server"]}
+        auth = (opt["username"], opt["password"])
+
+        ips, parts = [], []
+        for i in range(2):
+            try:
+                r = requests.get(
+                    "https://ipinfo.io/json",
+                    proxies=proxies,
+                    auth=auth,
+                    timeout=timeout,
+                    headers={"Accept": "application/json"},
+                )
+                if r.status_code != 200:
+                    return {"ok": False, "detail": f"Resin 返回 HTTP {r.status_code}"}
+                d = r.json()
+                ip, country = d.get("ip", "?"), d.get("country", "")
+                ips.append(ip)
+                parts.append(f"{ip} ({country})")
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "detail": f"第{i + 1}次请求失败: {exc.__class__.__name__}: {exc}",
+                }
+        sticky = len(ips) == 2 and ips[0] == ips[1]
+        return {
+            "ok": True,
+            "sticky": sticky,
+            "account": f"{self.platform}.{account}",
+            "ip": ips[0],
+            "detail": (
+                f"同 Account({self.platform}.{account}) 两次出口: "
+                f"{parts[0]} → {parts[1]}；" + ("粘性 OK" if sticky else "IP 变化，粘性异常")
+            ),
+        }
+
     # ---------- 报表 ----------
     def snapshot(self) -> Dict[str, Any]:
         """状态汇总（不含 token，避免泄露）。"""
