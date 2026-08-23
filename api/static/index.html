@@ -460,6 +460,9 @@ createApp({
     },
     filteredLogs() {
       return this.logLevel ? this.logs.filter(l => l.level === this.logLevel) : this.logs;
+    },
+    allChecked() {
+      return this.accounts.length > 0 && this.accounts.every(a => this.isSelected(a.account));
     }
   },
   methods: {
@@ -555,9 +558,6 @@ createApp({
       if (checked && idx < 0) arr.push(acc);
       if (!checked && idx >= 0) arr.splice(idx, 1);
       this.selectedAccounts = arr;
-    },
-    allChecked() {
-      return this.accounts.length > 0 && this.accounts.every(a => this.isSelected(a.account));
     },
     toggleAll() {
       if (this.allChecked) {
