@@ -79,6 +79,13 @@ def test_detect_account_unblocked_priority():
     # 普通页不该误报
     assert PageDetector(_FakePage(["输入密码"])).is_account_unblocked() is False
 
+    # 「帐户恢复已被阻止」含「一些异常活动」字样，必须识别为 recovery_blocked 而非 risk_blocked
+    blocked = PageDetector(_FakePage(["帐户恢复已被阻止", "我们检测到一些异常活动，并已阻止恢复此帐户"]))
+    assert blocked.is_recovery_blocked() is True
+    assert blocked.detect() == "recovery_blocked"
+    from account.status import verdict_from_page_state
+    assert verdict_from_page_state("recovery_blocked").retryable is False
+
 
 class _FakePage:
     """最小伪页面：只支持 detector 用到的 get_by_text/locator/url。"""

@@ -40,6 +40,9 @@ _PAGE_MAP = {
     "risk_blocked": StatusVerdict(
         AccountStatus.FAILED.value, "IP 触发风控（异常活动/维护）", retryable=True
     ),
+    "recovery_blocked": StatusVerdict(
+        AccountStatus.FAILED.value, "帐户恢复已被阻止（解锁失败，风险过高）", retryable=False
+    ),
     "account_unblocked": StatusVerdict(
         AccountStatus.OK.value, "人机验证通过，帐户已取消阻止"
     ),

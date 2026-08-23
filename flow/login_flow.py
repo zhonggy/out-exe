@@ -42,6 +42,7 @@ _ENTRY_STATES = (
     "password_wrong",
     "account_locked",
     "password_login_blocked",
+    "recovery_blocked",
     "risk_blocked",
 )
 
@@ -197,6 +198,14 @@ class LoginFlow(BaseFlow):
             handled = self._dismiss_intercept(state)
             nxt = self.detector.wait_for_any(list(_ENTRY_STATES), timeout_ms=30000, ignore=[state, "unknown"] if handled else ["unknown"])
             return self._handle_state(nxt, account, password, depth + 1)
+
+        if state == "recovery_blocked":
+            # 「帐户恢复已被阻止」：人机验证也救不回的解锁失败终态，不再重试
+            self.feedback_proxy(False)
+            return self._fail(
+                StatusVerdict(AccountStatus.FAILED.value, "帐户恢复已被阻止（人机验证后仍无法解锁，IP/账号风险过高）", retryable=False),
+                FlowStage.CHECK_STATUS,
+            )
 
         if state == "account_locked":
             # 锁定页若带人机验证入口（“下一步完成人机验证”），点下一步尝试解锁；

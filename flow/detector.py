@@ -131,6 +131,14 @@ ACCOUNT_UNBLOCKED_TEXTS = (
     "We've unblocked your account",
     "Your account is unblocked",
 )
+ACCOUNT_RECOVERY_BLOCKED_TEXTS = (
+    "帐户恢复已被阻止",
+    "账户恢复已被阻止",
+    "已阻止恢复此帐户",
+    "已阻止恢复此账户",
+    "recovery has been blocked",
+    "blocked from recovering your account",
+)
 RISK_BLOCKED_TEXTS = (
     "一些异常活动",
     "此站点正在维护",
@@ -299,6 +307,10 @@ class PageDetector:
         """人机验证通过后的「已取消阻止你的帐户」页（带「继续」按钮，点了就能往下走）。"""
         return any_text(self.page, ACCOUNT_UNBLOCKED_TEXTS) is not None
 
+    def is_recovery_blocked(self) -> bool:
+        """「帐户恢复已被阻止」页：人机验证也救不回来的解锁失败终态。"""
+        return any_text(self.page, ACCOUNT_RECOVERY_BLOCKED_TEXTS) is not None
+
     def is_risk_blocked(self) -> bool:
         return any_text(self.page, RISK_BLOCKED_TEXTS) is not None
 
@@ -332,6 +344,9 @@ class PageDetector:
         if self.is_account_unblocked():
             # 验证通过后的放行页：必须先于锁定/风控判定（页面仍带安全类文案）
             return "account_unblocked"
+        if self.is_recovery_blocked():
+            # 解锁失败终态：必须先于 risk_blocked（页面含「一些异常活动」字样会误命中）
+            return "recovery_blocked"
         if self.is_risk_blocked():
             return "risk_blocked"
         if self.is_account_not_found():
