@@ -193,6 +193,7 @@
           <button class="btn" @click="loadAccounts">刷新</button>
           <button class="btn primary" @click="post('/api/accounts/import').then(loadAccounts)">从 accounts.txt 导入</button>
           <a class="btn" :href="exportUrl" target="_blank" style="text-decoration:none">导出 CSV</a>
+          <button class="btn" @click="resetSelected" :disabled="!selectedAccounts.length">重置选中（{{ selectedAccounts.length }}）</button>
           <button class="btn danger" @click="deleteSelected" :disabled="!selectedAccounts.length">删除选中（{{ selectedAccounts.length }}）</button>
         </div>
         <div class="grid2 sec">
@@ -568,6 +569,17 @@ createApp({
         for (const a of this.accounts) set.add(a.account);
         this.selectedAccounts = [...set];
       }
+    },
+    async resetSelected() {
+      const list = this.selectedAccounts.slice();
+      if (!list.length) return;
+      if (!confirm('确定将选中的 ' + list.length + ' 个账号重置为未处理（新账号）？下次派发会重新跑这些账号')) return;
+      try {
+        const r = await this.req('/api/accounts/batch_reset', { method: 'POST', body: JSON.stringify({accounts: list}) });
+        this.notify('已重置 ' + r.reset + ' 个账号');
+        this.selectedAccounts = [];
+        this.loadAccounts();
+      } catch (e) { this.notify('重置失败: ' + e.message); }
     },
     async deleteSelected() {
       const list = this.selectedAccounts.slice();

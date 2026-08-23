@@ -363,6 +363,16 @@ def create_app(cfg=None) -> FastAPI:
             tm.am.remove(str(acc))
         return {"ok": True, "deleted": len(accounts)}
 
+    @app.post("/api/accounts/batch_reset", dependencies=guard)
+    def reset_batch_accounts(body: Dict[str, Any]):
+        """批量重置账号状态为 NEW（面板多选重置用）。"""
+        accounts = body.get("accounts", [])
+        if not isinstance(accounts, list) or not accounts:
+            raise HTTPException(status_code=400, detail="accounts 必须是账号列表")
+        for acc in accounts:
+            tm.am.reset_status(str(acc))
+        return {"ok": True, "reset": len(accounts)}
+
     @app.post("/api/accounts/{account}/reset", dependencies=guard)
     def reset_account(account: str):
         tm.am.reset_status(account)
