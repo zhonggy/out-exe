@@ -4,8 +4,11 @@ set "PYTHONUTF8=1"
 cd /d "%~dp0"
 
 echo ==================================================
-echo   OutlookAutomation one-click setup
+echo   OutlookAutomation one-click setup (dev mode)
 echo ==================================================
+echo.
+echo   This script sets up a local dev environment.
+echo   End users should use OutlookAutomation-Setup.exe instead.
 echo.
 
 REM ---------- detect local proxy (needed for GitHub downloads) ----------
@@ -100,8 +103,7 @@ echo.
 echo ==================================================
 echo   Setup done! Next steps:
 echo     1. Edit accounts.txt, one per line: email----password
-echo     2. python main.py serve     panel at http://127.0.0.1:8000
-echo        (API token: data\api_token or printed in startup log)
-echo     3. In panel: import accounts, start workers, dispatch tasks
+echo     2. start.bat        (or: python main.py gui)
+echo     3. In the GUI: import accounts, dispatch tasks, click Start
 echo ==================================================
 pause

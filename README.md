@@ -1,26 +1,35 @@
 # OutlookAutomation
 
-基于 Python + Patchright 的本地自动化框架。Windows 本地运行，不依赖 Docker。
+基于 Python + Patchright + PySide6 的 Windows 桌面自动化程序。
 
-已实现 v1.0 → v1.3：浏览器管理、配置系统、账号管理、流程引擎（含验证码自动按压）、
-任务队列与 Worker 池、本地管理面板、代理与环境（Profile）管理。
+已实现 v1.0 → v1.4：浏览器管理、配置系统、账号管理、流程引擎（含验证码自动按压）、
+任务队列与 Worker 池、**PySide6 桌面 GUI**、代理与环境（Profile）管理、
+**GitHub Actions 自动编译 Windows 安装包**。
 
-## 快速开始
+## 给最终用户
+
+从 [Releases](https://github.com/zhonggy/out-exe/releases) 下载
+`OutlookAutomation-Setup.exe`，安装后双击桌面图标即可。
+不需要安装 Python、Node.js，也不需要手动下载 Chromium。
+
+- 程序装在 `C:\Program Files\OutlookAutomation`（只读）
+- 用户数据在 `%APPDATA%\OutlookAutomation`（卸载默认保留，升级不覆盖）
+
+## 给开发者
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 patchright install chromium
-python scripts/setup_browser.py    # 下载 fingerprint-chromium 指纹内核（约 180MB，自动写入配置）
+python scripts/setup_browser.py    # 下载 fingerprint-chromium 指纹内核（约 180MB）
 
 python main.py doctor              # 环境自检
+python main.py gui                 # 启动桌面 GUI
 ```
 
-> 指纹内核（fingerprint-chromium）体积大不入仓库。`setup_browser.py` 会从官方 Releases
-> 自动下载、解压到 `browsers/fingerprint-chromium/` 并写好配置；国内网络会自动探测本机
-> 代理端口（7897/7890/10809）。也可以手动从
-> [Releases](https://github.com/adryfish/fingerprint-chromium/releases) 下载 Windows x64 zip
-> 解压后把 chrome.exe 路径填到 config.yaml 的 `browser.executable_path`。
-> 不想用指纹内核则清空 `executable_path` 并设 `fingerprint_enabled: false`。
+> 指纹内核体积大不入仓库。`setup_browser.py` 默认下载**锁定版本**（`PINNED_TAG`）
+> 而非 latest，保证 CI 构建可重现；国内网络会自动探测本机代理端口（7897/7890/10809）。
+> 内核路径由 `browser/kernel.py` 自动定位，配置里写 `fingerprint` 关键字即可，
+> 内核升级换目录名也不用改配置。
 
 创建 `accounts.txt`（每行一条，默认分隔符 `----`）：
 
@@ -29,23 +38,47 @@ account1@example.com----password1
 account2@example.com----password2
 ```
 
-然后：
+然后在 GUI 里导入账号、派发任务、点开始。也可以走命令行：
 
 ```bash
 python main.py import              # 导入账号到 SQLite
-python main.py run --limit 10      # 跑 10 个登录任务
-python main.py serve               # 启动管理面板 http://127.0.0.1:8000
+python main.py run --limit 10      # 跑 10 个任务（跑完退出）
+python main.py work                # 常驻执行进程（GUI 用的就是这个）
 ```
 
-首次 `serve` 会在 `data/api_token` 生成 Token，并在启动日志中打印。面板首次打开需粘贴该 Token。
+## 进程模型
+
+**GUI 进程不启动浏览器。** 所有浏览器任务在独立执行进程中运行：
+
+```
+OutlookAutomation.exe            ← GUI（PySide6）
+  │
+  ├─ 写 SQLite（下单 / 导入账号 / 取消）
+  │
+  └─ subprocess.Popen → OutlookAutomation.exe --exec-worker --workers N
+                            │   ← 同一个 EXE，argv 分流
+                            ├─ TaskManager + Worker 线程 × N
+                            ├─ Chromium × N
+                            └─ 命名管道 → 回推日志 / 进度 / 状态
+```
+
+这样设计的原因：
+
+- Patchright 同步 API 底层是 greenlet，与 Qt 事件循环放同一进程会产生难调试的冲突
+- 浏览器崩溃、指纹内核 DLL 异常只会带走执行进程，GUI 仍可用、能重启
+- 关闭窗口不中断任务（要停止请在「任务管理」页点「停止执行」）
+
+SQLite（WAL）是两个进程的共享真相源；命名管道只负责展示层的低延迟推送，
+断开后 GUI 自动退回轮询 `worker_stats.json`，不影响任务正确性。
 
 ## 命令行
 
 | 命令 | 说明 |
 | --- | --- |
-| `python main.py serve` | 启动本地面板（`--port` / `--host` / `--no-auth`） |
+| `python main.py gui` | 启动桌面 GUI |
+| `python main.py work` | 常驻执行进程（`--workers`） |
 | `python main.py import` | 导入 `accounts.txt`（`--file` 指定其他文件） |
-| `python main.py run` | 执行任务（`--limit` / `--account` / `--type` / `--workers`） |
+| `python main.py run` | 执行任务并等待完成（`--limit` / `--account` / `--type` / `--workers`） |
 | `python main.py stats` | 账号 / 任务 / 验证码 / 代理 / 环境统计 |
 | `python main.py accounts` | 列出账号（`--status NEW`） |
 | `python main.py tasks` | 列出任务记录 |
@@ -53,11 +86,24 @@ python main.py serve               # 启动管理面板 http://127.0.0.1:8000
 | `python main.py clean` | 清理（`--profiles` / `--tasks` / `--all-profiles`） |
 | `python main.py doctor` | 依赖与运行环境自检 |
 
+打包后同一个 EXE 由 argv 分流：无参数 → GUI，`--exec-worker` → 执行进程。
+
 ## 目录结构
 
 ```
 OutlookAutomation/
-├── main.py                  CLI 入口
+├── main.py                  入口（GUI / --exec-worker / CLI 子命令）
+├── desktop/                 PySide6 桌面 GUI
+│   ├── app.py               QApplication 引导 + argv 分流
+│   ├── main_window.py       主窗口 + 左侧导航 + 统一刷新定时器
+│   ├── context.py           AppContext，各页共享的运行时单例
+│   ├── single_instance.py   单实例锁（防双开抢同一个数据库）
+│   ├── theme.py             深色主题 + 状态色
+│   ├── bridge/
+│   │   ├── worker_proc.py   执行进程生命周期 + argv 构造
+│   │   ├── ipc.py           命名管道 IPC（行分隔 JSON）
+│   │   └── tasks.py         QThreadPool 后台任务
+│   └── views/               8 个页面（仪表盘/账号/任务/日志/浏览器/Profile/代理/设置）
 ├── config/
 │   ├── config.yaml          全部可调参数
 │   └── loader.py            YAML 加载 + 点号访问 + 环境变量覆盖
@@ -85,14 +131,22 @@ OutlookAutomation/
 │   └── sqlite.py            SQLite 存储层（WAL，线程安全）
 ├── proxy/
 │   ├── provider.py          代理配置解析 + IP 信息查询
-│   └── manager.py           加权选择 + IP 表现追踪 + 惩罚
-├── api/
-│   ├── server.py            FastAPI 接口（Token 认证）
-│   └── static/index.html    Vue3 CDN 单文件面板
-├── logger/logger.py         控制台 + 文件轮转 + 内存缓冲
-├── tests/test_core.py       26 个单元测试（不需要浏览器）
-├── data/  logs/  profiles/  运行时生成
-└── config.yaml 之外无需其他配置
+│   ├── manager.py           加权选择 + IP 表现追踪 + 惩罚
+│   └── resin.py             Resin 外部粘性代理池
+├── browser/kernel.py        Chromium 内核定位（打包/开发两种布局）
+├── logger/logger.py         控制台 + 文件轮转 + 内存缓冲 + 可插拔 sink
+├── scripts/
+│   ├── setup_browser.py     下载指纹内核（版本锁定）
+│   ├── prepare_chromium.py  整理双内核到 build/Chromium
+│   └── assemble_dist.py     组装打包产物 + 完整性校验
+├── tests/
+│   ├── test_core.py         49 个单元测试（不需要浏览器）
+│   ├── smoke_gui.py         GUI 冒烟（offscreen）
+│   └── smoke_ipc.py         IPC 端到端冒烟
+├── build.spec               PyInstaller onedir 配置
+├── installer.iss            Inno Setup 安装包配置
+├── .github/workflows/       GitHub Actions Windows 编译
+└── data/  logs/  profiles/  运行时生成（打包后在 %APPDATA%）
 ```
 
 ## 状态机
@@ -144,7 +198,7 @@ resin:
   `<resin_url>/Platform/https/ipinfo.io/...` 并携带 `X-Resin-Account` 头，确保查询的就是该账号真实出口。
 - 时区/地理位置随该账号出口 IP 自动匹配。
 - 租约继承接口已内置（`Resin.inherit_lease`），供未来需要临时身份→稳定身份过湾的场景使用。
-- 状态查看：面板「浏览器/代理」页或 `GET /api/proxy` 的 `resin` 字段（不含 Token）。
+- 状态查看：GUI「代理」页（不含 Token）。
 
 ### 方式二：普通端口池 / 单端口代理
 
@@ -171,7 +225,7 @@ set OA_SYSTEM__MAX_WORKERS=5
 
 常用项：
 
-- `browser.executable_path` 留空用 patchright 自带 Chromium；指向 fingerprint-chromium 时可配合 `fingerprint_enabled`
+- `browser.executable_path` 内核选择：`fingerprint`（默认，自动定位）/ `patchright`（备用）/ 绝对路径；GUI「浏览器」页可一键切换
 - `profile.reuse` true 时同账号固定复用一个 profile，保留登录态减少验证
 - `proxy.mode` `single` 单端口 / `pool` 端口池（`port_start`~`port_end`）
 - `flow.captcha_strategy` 0 全自动 / 1 半自动
@@ -179,23 +233,73 @@ set OA_SYSTEM__MAX_WORKERS=5
 
 ## 安全说明
 
-- API 默认仅监听 `127.0.0.1` 并开启 Token 认证。该接口能启动浏览器、读写账号数据，
-  不要改成 `0.0.0.0`，也不建议用 `--no-auth`：关闭认证后同机任意进程都能下发任务。
-- Token 存放在 `data/api_token`；`/api/config` 返回时已脱敏，账号列表接口不返回明文密码。
-- 导出 CSV 不含密码字段。
-- `main.py clean --all-profiles` 会删除全部登录态，执行前需二次确认。
+**已不再有任何网络监听。** 桌面版删除了 FastAPI/uvicorn 与 Token 认证，
+GUI 与执行进程之间走本机命名管道（Windows `AF_PIPE` / POSIX Unix socket），
+作用域限于当前用户会话，不开 TCP 端口。
+
+**账号密码在 SQLite 中是明文存储**（`accounts.password` 为 TEXT）。
+保护完全依赖 Windows 用户账户隔离，需要知道的风险边界：
+
+- 数据库在 `%APPDATA%\OutlookAutomation\data\app.db`，同用户下的任意进程都能读
+- 把 `%APPDATA%` 放进云盘同步、做磁盘镜像拷贝，等于密码泄露
+- 多用户共用机器时不要用同一个 Windows 账户
+
+密码不进入任何输出：`Account.to_dict()` 默认脱敏为 `***`，GUI 所有展示路径都走这个默认值，
+日志、异常堆栈、IPC 推送、导出 CSV 均不含密码。DPAPI 加密列入后续计划。
+
+其他：
+
+- `main.py clean --all-profiles` 会删除全部登录态，执行前需二次确认
+- 删除正在被执行进程占用的 Profile 会二次警告（会导致对应任务失败）
+- 安装包未做代码签名，首次运行会触发 SmartScreen 警告
 
 ## 测试
 
 ```bash
-python -m pytest tests -q      # 26 passed，不启动浏览器
+python -m pytest tests -q                       # 49 passed，不启动浏览器
+QT_QPA_PLATFORM=offscreen python tests/smoke_gui.py   # GUI 冒烟
+python tests/smoke_ipc.py                       # IPC 端到端冒烟
 ```
 
-已验证：配置加载与环境变量覆盖、SQLite 全部表 CRUD、账号解析与导入、任务优先级队列与恢复、
-断点记录、代理加权与拉黑、Profile 复用与清理、验证码位置算法边界、API 认证与全部只读端点。
+单元测试覆盖：配置加载与环境变量覆盖、**双路径地基（APP_ROOT / DATA_ROOT）**、
+SQLite 全部表 CRUD、账号解析与导入、任务优先级队列与恢复、断点记录、
+代理加权与拉黑、Profile 复用与清理、验证码位置算法边界、
+**Chromium 内核定位（含内核升级后旧路径失效的回退）**、
+**argv 分流（冻结/开发两种模式）**、**IPC 编解码（分帧、半包、坏行、中文）**。
+
+冒烟测试覆盖：8 个页面构造与切换、快照字段完整性、跨进程 IPC 真链路
+（命名管道连接、logger sink 推送、含换行日志不破坏分帧、上下线消息）。
+
+CI 上这三项都是打包的前置门禁，任一失败不产出安装包。
 
 端到端也已实测：headless 双 Worker 并发跑 4 个任务全部 COMPLETED，
 断点按 `BROWSER_STARTED → LOGIN_PAGE → COMPLETED` 落库，浏览器与 profile 正常回收。
+
+## 打包
+
+正式编译在 GitHub Actions 上完成，本地不作为编译环境。
+
+```
+git push                    → 跑测试 + 打包，产物在 Artifacts
+git tag v1.0.0 && git push --tags  → 额外发布 GitHub Release
+```
+
+本地想手动打一次：
+
+```bash
+python scripts/prepare_chromium.py      # 整理双内核到 build/Chromium
+pyinstaller --noconfirm build.spec      # onedir 产物到 dist/
+python scripts/assemble_dist.py         # 拷内核 + 校验完整性
+iscc installer.iss                      # 生成安装包
+```
+
+**必须用 onedir，不能用 onefile**：`patchright/driver/` 含 node.exe 与完整 node 包
+（约 96MB），onefile 下每次启动都要解压；双进程模型下两个进程各解压一份，
+磁盘与启动时间都翻倍，且杀软对自解压行为误报率高。
+
+安装包约 400-500MB（LZMA2 压缩），安装后占用约 800-850MB —— 两个 Chromium 内核
+（指纹 425MB + 备用 332MB）是主要体积。已剔除 `chromium_headless_shell`（197MB）
+和 `ffmpeg`，本项目不需要。
 
 ## 扩展新流程
 
@@ -219,7 +323,10 @@ class MyFlow(BaseFlow):
 python main.py run --type myflow --limit 5
 ```
 
-## 后续（v1.4 插件系统）
+## 后续
 
-当前 `flow` 注册表已具备插件基础。下一步是把流程包装为 `plugins/<name>/{plugin.py,config.yaml}`
-形式，支持目录扫描自动加载，无需改动框架代码。
+- 密码 DPAPI 加密（绑当前 Windows 用户，在 `database/sqlite.py` 透明转换）
+- 代码签名（消除 SmartScreen 警告）
+- 真正的任务暂停（需给 `task/worker.py` 加 `pause_event`，现在只有开始/停止）
+- 插件系统：`flow` 注册表已具备基础，下一步把流程包装为
+  `plugins/<name>/{plugin.py,config.yaml}`，支持目录扫描自动加载

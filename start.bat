@@ -1,8 +1,9 @@
 @echo off
-setlocal EnableDelayedExpansion
-set "PYTHONUTF8=1"
+setlocal enabledelayedexpansion
 cd /d "%~dp0"
-title OutlookAutomation
+
+REM 开发模式启动桌面 GUI。正式发布版是安装包里的 OutlookAutomation.exe，
+REM 双击即可，不需要这个脚本。
 
 if not exist ".venv\Scripts\activate.bat" (
     echo [ERROR] virtualenv not found. Run install.bat first!
@@ -12,28 +13,16 @@ if not exist ".venv\Scripts\activate.bat" (
 call ".venv\Scripts\activate.bat"
 
 echo ==================================================
-echo   OutlookAutomation
+echo   OutlookAutomation - Desktop (dev mode)
 echo --------------------------------------------------
-echo   Panel : http://127.0.0.1:8000
-if exist "data\api_token" (
-    set /p OA_TOKEN=<data\api_token
-    echo   Token : !OA_TOKEN!
-) else (
-    echo   Token : ^(first start^) see log lines below:
-)
+echo   Data dir : %%APPDATA%%\OutlookAutomation (frozen)
+echo              project root (dev mode)
 echo --------------------------------------------------
-
-REM auto-open browser after server warms up
-start "" cmd /c "timeout /t 5 /nobreak >nul & start http://127.0.0.1:8000"
-
-echo   Close this window or press Ctrl+C to stop the panel.
-echo   NOTE: login tasks keep running in their own process
-echo         even if this window is closed. Use panel STOP button to halt them.
+echo   Close the window to exit the GUI.
+echo   NOTE: login tasks run in a separate process and
+echo         keep running after the GUI closes. Use the
+echo         STOP button on the Tasks page to halt them.
 echo ==================================================
 echo.
 
-python main.py serve
-
-echo.
-echo [info] panel stopped.
-pause
+python main.py gui

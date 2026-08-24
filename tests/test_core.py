@@ -1,9 +1,10 @@
-"""不依赖浏览器的单元测试：配置、数据库、账号、队列、代理、Profile、检测器、API。"""
+"""不依赖浏览器的单元测试：配置、数据库、账号、队列、代理、Profile、检测器、内核定位。"""
 
 from __future__ import annotations
 
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -47,9 +48,30 @@ def cfg():
 # ---------- 配置 ----------
 def test_config_defaults(cfg):
     assert cfg.get("system.max_workers") >= 1
-    assert cfg.get("api.host") == "127.0.0.1"
-    assert cfg.get("api.auth_enabled") is True
     assert cfg.get("flow.login_url").startswith("https://")
+    assert cfg.get("logger.level") in ("DEBUG", "INFO", "WARN", "ERROR")
+
+
+def test_config_has_no_web_api_section(cfg):
+    """桌面版不再有 Web 服务，api.* 配置已移除。"""
+    assert cfg.section("api") == {}
+
+
+def test_config_app_and_data_root(cfg):
+    """路径地基：开发模式下两个根目录都存在且为绝对路径。"""
+    from config import APP_ROOT, DATA_ROOT
+
+    assert APP_ROOT.is_absolute()
+    assert DATA_ROOT.is_absolute()
+    assert cfg.root == APP_ROOT
+    assert cfg.data_root == DATA_ROOT
+    # 用户数据走 DATA_ROOT，程序资源走 APP_ROOT
+    assert cfg.resolve("data/x.db").parent.parent == DATA_ROOT
+    assert cfg.resolve_app("Chromium/x").parent.parent == APP_ROOT
+    # 绝对路径不被重写
+    abs_in = Path(tempfile.gettempdir()).resolve() / "oa_abs_probe.db"
+    assert cfg.resolve(str(abs_in)) == abs_in
+    assert cfg.resolve_app(str(abs_in)) == abs_in
 
 
 def test_config_dotted_and_resolve(cfg):
@@ -582,69 +604,139 @@ def test_flow_stage_order():
     assert FlowStage.FAILED.index() == -1
 
 
-# ---------- API ----------
-def test_api_auth_and_endpoints(tmp_path, monkeypatch):
-    from fastapi.testclient import TestClient
+# ---------- Chromium 内核定位 ----------
+def test_kernel_resolve_explicit_absolute(tmp_path, monkeypatch):
+    """显式绝对路径存在时原样返回。"""
+    from browser.kernel import resolve_executable
 
-    monkeypatch.setenv("OA_DATABASE__PATH", str(tmp_path / "api.db"))
-    monkeypatch.setenv("OA_LOGGER__DIR", str(tmp_path / "logs"))
-    monkeypatch.setenv("OA_PROFILE__ROOT", str(tmp_path / "profiles"))
-    monkeypatch.setenv("OA_SYSTEM__ACCOUNTS_FILE", str(tmp_path / "accounts.txt"))
-
-    import database
-    import proxy as proxy_pkg
-    import browser as browser_pkg
-    import task as task_pkg
-
-    database.reset_db()
-    proxy_pkg.reset_proxy_manager()
-    browser_pkg.reset_profile_manager()
-    browser_pkg.reset_browser_manager()
-    task_pkg.reset_task_manager()
-
-    from api import create_app
-
+    fake = tmp_path / "chrome.exe"
+    fake.write_text("x", encoding="utf-8")
+    monkeypatch.setenv("OA_BROWSER__EXECUTABLE_PATH", str(fake))
     cfg = load_config(use_cache=False)
-    cfg.set("api.token", "test-token-123")
-    app = create_app(cfg)
-    client = TestClient(app)
+    assert resolve_executable(cfg) == str(fake)
 
-    # meta 免认证
-    assert client.get("/api/meta").json()["auth_enabled"] is True
-    # 缺 token → 401
-    assert client.get("/api/stats").status_code == 401
-    assert client.get("/api/stats", headers={"X-API-Token": "wrong"}).status_code == 401
 
-    h = {"X-API-Token": "test-token-123"}
-    assert client.get("/api/stats", headers=h).status_code == 200
+def test_kernel_resolve_patchright_keyword(monkeypatch):
+    """patchright 关键字 → 返回空串，交给 Playwright 默认查找。"""
+    from browser.kernel import resolve_executable
 
-    r = client.post("/api/accounts", json={"account": "api@e.com", "password": "pw"}, headers=h)
-    assert r.status_code == 200 and r.json()["ok"]
+    monkeypatch.setenv("OA_BROWSER__EXECUTABLE_PATH", "patchright")
+    cfg = load_config(use_cache=False)
+    assert resolve_executable(cfg) == ""
 
-    r = client.post("/api/accounts/import", json={"text": "x@e.com----p1\ny@e.com----p2"}, headers=h)
-    assert r.json()["imported"] == 2
 
-    accounts = client.get("/api/accounts", headers=h).json()
-    assert accounts["total"] == 3
-    assert any(a["account"] == "api@e.com" for a in accounts["items"])
-    assert all(a["password"] == "***" for a in accounts["items"])
+def test_kernel_resolve_missing_path_raises(monkeypatch, tmp_path):
+    """显式路径不存在且无内核可回退时报明确错误，而不是静默启动失败。"""
+    from browser.kernel import resolve_executable
 
-    r = client.post("/api/tasks", json={"account": "api@e.com", "type": "login"}, headers=h)
-    task_id = r.json()["task"]["id"]
-    assert client.get(f"/api/tasks/{task_id}", headers=h).status_code == 200
-    assert client.post(f"/api/tasks/{task_id}/cancel", headers=h).json()["ok"]
-    assert client.get("/api/tasks", headers=h).json()["items"]
+    monkeypatch.setattr("browser.kernel.find_fingerprint", lambda root: None)
+    monkeypatch.setenv("OA_BROWSER__EXECUTABLE_PATH", str(tmp_path / "nope" / "chrome.exe"))
+    cfg = load_config(use_cache=False)
+    with pytest.raises(FileNotFoundError):
+        resolve_executable(cfg)
 
-    assert client.get("/api/queue", headers=h).status_code == 200
-    # 浏览器明细在独立执行进程内，面板返回占位符
-    assert client.get("/api/browsers", headers=h).json()["active"] == "-"
-    assert client.get("/api/profiles", headers=h).status_code == 200
-    assert client.get("/api/proxy", headers=h).json()["direct"] is True
-    assert client.get("/api/logs", headers=h).status_code == 200
-    # 配置接口不得泄露 token
-    assert client.get("/api/config", headers=h).json()["api"]["token"] == "***"
-    # 面板首页可访问
-    assert client.get("/").status_code == 200
 
-    task_pkg.reset_task_manager()
-    database.reset_db()
+def test_kernel_resolve_stale_version_path_falls_back(monkeypatch, tmp_path):
+    """内核升级后旧的带版本号路径失效，应回退到自动定位而不是直接失败。"""
+    from browser.kernel import resolve_executable
+
+    newer = tmp_path / "fingerprint" / "chrome.exe"
+    newer.parent.mkdir(parents=True)
+    newer.write_text("x", encoding="utf-8")
+    monkeypatch.setattr("browser.kernel.find_fingerprint", lambda root: newer)
+    monkeypatch.setenv(
+        "OA_BROWSER__EXECUTABLE_PATH",
+        "browsers/fingerprint-chromium/ungoogled-chromium_1.2.3_windows_x64/chrome.exe",
+    )
+    cfg = load_config(use_cache=False)
+    assert resolve_executable(cfg) == str(newer)
+
+
+def test_kernel_describe_shape(monkeypatch):
+    """GUI 浏览器页依赖的快照字段必须齐全。"""
+    from browser.kernel import describe
+
+    monkeypatch.setenv("OA_BROWSER__EXECUTABLE_PATH", "patchright")
+    cfg = load_config(use_cache=False)
+    snap = describe(cfg)
+    for key in (
+        "configured",
+        "active_kernel",
+        "active_path",
+        "fingerprint_available",
+        "patchright_bundled",
+        "error",
+    ):
+        assert key in snap
+
+
+def test_bundled_patchright_layout(tmp_path):
+    """随包 patchright 内核支持 chrome-win/ 与 chromium-XXXX/chrome-win/ 两种布局。"""
+    from browser.kernel import bundled_patchright
+
+    root = tmp_path / "Chromium" / "patchright" / "chromium-1169" / "chrome-win"
+    root.mkdir(parents=True)
+    exe = root / ("chrome.exe" if sys.platform == "win32" else "chrome")
+    exe.write_text("x", encoding="utf-8")
+    assert bundled_patchright(tmp_path) == exe
+
+
+# ---------- 桌面层：执行进程桥接 ----------
+def test_worker_command_frozen_uses_argv_flag(monkeypatch):
+    """打包后 sys.executable 是 EXE 自身，必须走 --exec-worker 而不是 main.py。"""
+    from desktop.bridge.worker_proc import build_worker_command
+
+    monkeypatch.setattr("desktop.bridge.worker_proc.FROZEN", True)
+    cfg = load_config(use_cache=False)
+    cmd = build_worker_command(cfg, workers=4, executable="C:/app/OutlookAutomation.exe")
+    assert cmd[0] == "C:/app/OutlookAutomation.exe"
+    assert "--exec-worker" in cmd
+    assert "main.py" not in " ".join(cmd)
+    assert cmd[cmd.index("--workers") + 1] == "4"
+
+
+def test_worker_command_dev_uses_main_py(monkeypatch):
+    """开发模式仍然走 python main.py work，保持现有可调试性。"""
+    from desktop.bridge.worker_proc import build_worker_command
+
+    monkeypatch.setattr("desktop.bridge.worker_proc.FROZEN", False)
+    cfg = load_config(use_cache=False)
+    cmd = build_worker_command(cfg, workers=2, executable="python.exe")
+    assert cmd[0] == "python.exe"
+    assert cmd[1].endswith("main.py")
+    assert cmd[2] == "work"
+    assert "--exec-worker" not in cmd
+
+
+def test_ipc_message_roundtrip():
+    """IPC 用行分隔 JSON，日志内容含换行也不能破坏分帧。"""
+    from desktop.bridge.ipc import decode_stream, encode_message
+
+    payload = encode_message({"kind": "log", "message": "line1\nline2"})
+    payload += encode_message({"kind": "stats", "processed": 3})
+    messages, rest = decode_stream(payload)
+    assert rest == b""
+    assert [m["kind"] for m in messages] == ["log", "stats"]
+    assert messages[0]["message"] == "line1\nline2"
+
+
+def test_ipc_partial_frame_is_buffered():
+    """半条消息必须留在缓冲区，等下一批数据到齐再解析。"""
+    from desktop.bridge.ipc import decode_stream, encode_message
+
+    full = encode_message({"kind": "log", "message": "hello"})
+    head, tail = full[:5], full[5:]
+    messages, rest = decode_stream(head)
+    assert messages == [] and rest == head
+    messages, rest = decode_stream(rest + tail)
+    assert rest == b"" and messages[0]["message"] == "hello"
+
+
+def test_ipc_ignores_corrupt_line():
+    """坏行被丢弃，不能让后续正常消息一起丢失。"""
+    from desktop.bridge.ipc import decode_stream, encode_message
+
+    data = b"{not json}\n" + encode_message({"kind": "log", "message": "ok"})
+    messages, rest = decode_stream(data)
+    assert rest == b""
+    assert len(messages) == 1 and messages[0]["message"] == "ok"

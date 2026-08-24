@@ -1,7 +1,12 @@
-"""OutlookAutomation 命令行入口。
+"""OutlookAutomation 入口。
 
-用法：
-    python main.py serve                    启动本地管理面板（默认 127.0.0.1:8000）
+打包后同一个 EXE 承担两个角色，由 argv 分流：
+    OutlookAutomation.exe                       启动桌面 GUI
+    OutlookAutomation.exe --exec-worker         执行进程（由 GUI 拉起）
+
+开发模式下的命令行用法：
+    python main.py gui                      启动桌面 GUI
+    python main.py work                     手动启动执行进程
     python main.py import                   从 accounts.txt 导入账号
     python main.py run --limit 10           批量执行登录任务（跑完即退出）
     python main.py run --account a@b.com    只跑单个账号
@@ -38,20 +43,97 @@ def _bootstrap():
     return cfg, log, db
 
 
-# ---------- 子命令 ----------
-def cmd_serve(args) -> int:
-    cfg, log, _db = _bootstrap()
-    from api import run_server
+# ---------- IPC（执行进程 → GUI 实时推送）----------
+#
+# 旧 Web 面板的缺陷：日志缓冲在执行进程内，面板进程读自己的空缓冲，
+# 所以面板上看不到任务日志。这里给 logger 挂一个 sink 把日志推给 GUI。
+# 未设置 IPC 地址（如手动跑 CLI）时全部退化为空操作。
+_ipc_sink = None
 
-    if args.port:
-        cfg.set("api.port", args.port)
-    if args.host:
-        cfg.set("api.host", args.host)
-    if args.no_auth:
-        cfg.set("api.auth_enabled", False)
-        log.warn("serve", "已通过 --no-auth 关闭接口认证，同机任意进程可下发任务")
-    run_server(cfg)
-    return 0
+
+def _attach_ipc_sink() -> None:
+    global _ipc_sink
+    if _ipc_sink is not None:
+        return
+    try:
+        from desktop.bridge.ipc import get_client
+        from logger import add_sink
+    except ImportError:
+        return
+    client = get_client()
+    if client is None:
+        return
+
+    def sink(record) -> None:
+        client.send({"kind": "log", **record})
+
+    add_sink(sink)
+    _ipc_sink = sink
+
+
+def _detach_ipc_sink() -> None:
+    global _ipc_sink
+    if _ipc_sink is None:
+        return
+    try:
+        from desktop.bridge.ipc import reset_client
+        from logger import remove_sink
+
+        remove_sink(_ipc_sink)
+        reset_client()
+    except ImportError:
+        pass
+    _ipc_sink = None
+
+
+def _ipc_send(payload) -> None:
+    """发一条非日志消息（统计 / 上下线）。无 IPC 时空操作。"""
+    try:
+        from desktop.bridge.ipc import publish
+
+        publish(payload)
+    except ImportError:
+        pass
+
+
+def _install_stop_handlers() -> None:
+    """把停止信号转成 KeyboardInterrupt，让 cmd_work 的 finally 能跑完收尾。
+
+    SIGBREAK/SIGTERM 默认动作是直接终止，tm.stop() 就不会执行 ——
+    浏览器不关、profile 不回收、任务卡在 RUNNING。
+    主路径是停止标志文件（见 desktop/bridge/worker_proc.py），
+    这里多上一道，让手动 Ctrl+C / taskkill 不带 /F 时也能正常收尾。
+    """
+
+    def _raise_interrupt(_signum, _frame):
+        raise KeyboardInterrupt
+
+    import signal
+
+    for name in ("SIGBREAK", "SIGTERM", "SIGINT"):
+        sig = getattr(signal, name, None)
+        if sig is None:
+            continue
+        try:
+            signal.signal(sig, _raise_interrupt)
+        except (OSError, ValueError):
+            # 非主线程或平台不支持：保持默认行为
+            pass
+
+
+def _stop_requested(cfg) -> bool:
+    """GUI 是否请求停止（通过停止标志文件）。"""
+    from desktop.bridge.worker_proc import STOP_FLAG_NAME
+
+    return cfg.resolve(STOP_FLAG_NAME).is_file()
+
+
+# ---------- 子命令 ----------
+def cmd_gui(args) -> int:
+    """启动桌面 GUI。"""
+    from desktop import run
+
+    return run([sys.argv[0]])
 
 
 def cmd_import(args) -> int:
@@ -120,12 +202,14 @@ def cmd_run(args) -> int:
 
 
 def cmd_work(args) -> int:
-    """独立执行进程：由面板以子进程方式拉起（OutlookRegister 模式）。
+    """独立执行进程：由 GUI 以子进程方式拉起，也可手动运行。
 
-    面板只负责下单与展示；本进程持有浏览器与 Worker 线程，
-    面板关闭/卡顿不影响执行。停止方式：CTRL_BREAK（优雅）或 terminate（强杀）。
+    GUI 只负责下单与展示；本进程持有浏览器与 Worker 线程，
+    GUI 关闭/卡顿不影响执行。停止方式：CTRL_BREAK（优雅）或 terminate（强杀）。
     """
     cfg, log, db = _bootstrap()
+    _attach_ipc_sink()
+    _install_stop_handlers()
     from task import get_task_manager
 
     tm = get_task_manager(cfg, logger=log)
@@ -138,6 +222,7 @@ def cmd_work(args) -> int:
 
     workers = args.workers or int(cfg.get("system.max_workers", 3))
     tm.start(workers=workers, restore=not args.no_restore)
+    _ipc_send({"kind": "hello", "ts": time.time(), "pid": os.getpid(), "workers": workers})
 
     pid_file = cfg.resolve("data/worker.pid")
     pid_file.parent.mkdir(parents=True, exist_ok=True)
@@ -145,12 +230,16 @@ def cmd_work(args) -> int:
     print(f"[WORKER] 已启动 {workers} 个 Worker，PID={os.getpid()}，等待任务...")
 
     try:
-        # 常驻：周期性从数据库补拉新任务（面板随时下单都能被接住）+ 统计落盘
+        # 常驻：周期性从数据库补拉新任务（GUI 随时下单都能被接住）+ 统计落盘
         tick = 0
         stats_file = cfg.resolve("data/worker_stats.json")
         while True:
             time.sleep(2)
             tick += 1
+            # GUI 请求停止：不靠信号（windowed 进程送不到 CTRL_BREAK）
+            if _stop_requested(cfg):
+                print("[WORKER] 收到停止请求，正在收尾...")
+                break
             try:
                 tm.queue.restore()
             except Exception:
@@ -159,11 +248,14 @@ def cmd_work(args) -> int:
                 try:
                     snap = tm.stats()
                     stats_file.write_text(json.dumps(snap), encoding="utf-8")
+                    # IPC 推送让 GUI 秒级看到进度；落盘文件仍保留作兜底
+                    _ipc_send({"kind": "stats", "ts": time.time(), "snapshot": snap})
                 except Exception:
                     pass
     except KeyboardInterrupt:
         print("\n[WORKER] 收到停止信号，正在收尾...")
     finally:
+        _ipc_send({"kind": "bye", "ts": time.time(), "pid": os.getpid()})
         tm.stop()
         try:
             pid_file.unlink()
@@ -171,6 +263,7 @@ def cmd_work(args) -> int:
             pass
         snap = tm.stats()
         print(f"[WORKER] 已退出。累计成功 {snap['succeeded']}，失败 {snap['failed']}")
+        _detach_ipc_sink()
     return 0
 
 
@@ -264,10 +357,11 @@ def cmd_doctor(args) -> int:
     cfg, _log, db = _bootstrap()
     ok = True
     print(f"Python: {sys.version.split()[0]}")
-    print(f"项目根目录: {cfg.root}")
+    print(f"程序目录: {cfg.root}")
+    print(f"数据目录: {cfg.data_root}")
     print(f"配置文件: {cfg.source_path or '(使用内置默认值)'}")
 
-    for module in ("patchright", "yaml", "fastapi", "uvicorn"):
+    for module in ("patchright", "yaml"):
         try:
             __import__(module)
             print(f"[OK]   依赖 {module}")
@@ -275,31 +369,71 @@ def cmd_doctor(args) -> int:
             print(f"[FAIL] 依赖 {module} 未安装")
             ok = False
     try:
+        import PySide6  # noqa: F401
+
+        print("[OK]   依赖 PySide6")
+    except ImportError:
+        print("[FAIL] 依赖 PySide6 未安装（桌面 GUI 无法启动）")
+        ok = False
+    try:
         import apscheduler  # noqa: F401
 
         print("[OK]   依赖 apscheduler")
     except ImportError:
         print("[WARN] apscheduler 未安装（定时任务不可用）")
 
+    # Playwright driver：打包版最常见的缺失项
     try:
-        from patchright.sync_api import sync_playwright
+        import patchright
+        from pathlib import Path as _Path
 
-        with sync_playwright() as p:
-            print(f"[OK]   Chromium: {p.chromium.executable_path}")
+        node = _Path(patchright.__file__).parent / "driver" / (
+            "node.exe" if os.name == "nt" else "node"
+        )
+        if node.is_file():
+            print(f"[OK]   Playwright driver: {node}")
+        else:
+            print(f"[FAIL] Playwright driver 缺少 {node.name}，浏览器无法启动")
+            ok = False
     except Exception as exc:
-        print(f"[FAIL] Chromium 不可用: {exc}")
-        print("       执行: patchright install chromium")
+        print(f"[FAIL] Playwright driver 检查失败: {exc}")
         ok = False
+
+    # 浏览器内核
+    from browser import describe_kernel
+
+    kernel = describe_kernel(cfg)
+    if kernel["error"]:
+        print(f"[FAIL] 浏览器内核: {kernel['error']}")
+        ok = False
+    else:
+        print(
+            f"[OK]   浏览器内核: {kernel['active_kernel']} "
+            f"{kernel['active_path'] or '(Playwright 默认查找)'}"
+        )
+    if not kernel["fingerprint_available"]:
+        print("[WARN] 指纹内核未找到，指纹伪装不可用")
 
     print(f"[OK]   数据库: {db.path}")
     accounts_file = cfg.path_of("system.accounts_file", "accounts.txt")
     print(f"{'[OK]  ' if accounts_file.is_file() else '[WARN]'} 账号文件: {accounts_file}")
     print(f"[OK]   日志目录: {cfg.path_of('logger.dir')}")
     print(f"[OK]   环境目录: {cfg.path_of('profile.root')}")
-    if bool(cfg.get("api.auth_enabled", True)):
-        print("[OK]   API Token 认证已开启")
-    else:
-        print("[WARN] API Token 认证已关闭，同机任意进程可下发任务")
+
+    # 目录可写性：Program Files 下最容易踩
+    for label, path in (
+        ("数据库目录", cfg.path_of("database.path", "data/app.db").parent),
+        ("日志目录", cfg.path_of("logger.dir", "logs")),
+        ("Profile 目录", cfg.path_of("profile.root", "profiles")),
+    ):
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            probe = path / ".oa_write_probe"
+            probe.write_text("x", encoding="utf-8")
+            probe.unlink()
+        except OSError as exc:
+            print(f"[FAIL] {label} 不可写: {path} ({exc})")
+            ok = False
     return 0 if ok else 1
 
 
@@ -313,11 +447,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command")
 
-    p = sub.add_parser("serve", help="启动本地管理面板")
-    p.add_argument("--host", default=None, help="监听地址（默认 127.0.0.1，不建议修改）")
-    p.add_argument("--port", type=int, default=None)
-    p.add_argument("--no-auth", action="store_true", help="关闭 Token 认证（不推荐）")
-    p.set_defaults(func=cmd_serve)
+    p = sub.add_parser("gui", help="启动桌面 GUI")
+    p.set_defaults(func=cmd_gui)
 
     p = sub.add_parser("import", help="导入账号文件")
     p.add_argument("--file", default=None, help="账号文件路径，默认 config.system.accounts_file")
@@ -331,7 +462,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-restore", action="store_true", help="不恢复上次未完成任务")
     p.set_defaults(func=cmd_run)
 
-    p = sub.add_parser("work", help="独立执行进程（供面板子进程调用，也可手动运行）")
+    p = sub.add_parser("work", help="独立执行进程（供 GUI 子进程调用，也可手动运行）")
     p.add_argument("--workers", type=int, default=None)
     p.add_argument("--no-restore", action="store_true", help="不恢复未完成任务")
     p.set_defaults(func=cmd_work)
@@ -366,8 +497,34 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[list] = None) -> int:
+    # 打包后同一个 EXE 承担两个角色，在这里分流：
+    #   --exec-worker  → 执行进程（不加载 Qt）
+    #   无子命令     → 桌面 GUI（仅冻结模式；开发模式保留打印帮助的行为）
+    raw = list(sys.argv[1:] if argv is None else argv)
+    from desktop.bridge.worker_proc import EXEC_WORKER_FLAG
+
+    if EXEC_WORKER_FLAG in raw:
+        workers = None
+        if "--workers" in raw:
+            idx = raw.index("--workers")
+            if idx + 1 < len(raw):
+                try:
+                    workers = int(raw[idx + 1])
+                except ValueError:
+                    workers = None
+        return cmd_work(
+            argparse.Namespace(workers=workers, no_restore="--no-restore" in raw)
+        )
+
+    from config import FROZEN
+
+    if FROZEN and not raw:
+        from desktop import run as _run_gui
+
+        return _run_gui([sys.argv[0]])
+
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(raw)
     if not getattr(args, "func", None):
         parser.print_help()
         return 0

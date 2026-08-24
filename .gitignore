@@ -9,7 +9,6 @@ profiles_smoke/
 
 # 账号与凭据（勿提交）
 accounts.txt
-data/api_token
 *.csv
 
 # Python
@@ -19,6 +18,11 @@ __pycache__/
 venv/
 .pytest_cache/
 
+# 打包产物
+build/
+dist/
+*.spec.bak
+
 # 临时脚本
 _smoke_*.py
 
@@ -26,5 +30,5 @@ _smoke_*.py
 .vscode/
 .idea/
 
-# fingerprint-chromium 内核（第三方大体积二进制，不入库）
+# Chromium 内核（第三方大体积二进制，由 CI 下载，不入库）
 browsers/

@@ -1,8 +1,14 @@
 """YAML 配置加载器。
 
 约定：
-- 配置文件默认 config/config.yaml
-- 所有相对路径统一相对项目根目录解析（PROJECT_ROOT）
+- 配置文件默认 config/config.yaml（打包后为 DATA_ROOT/config/config.yaml）
+- 路径分两个地基：
+    APP_ROOT   只读。程序自带资源（Chromium/、config.yaml.default）
+    DATA_ROOT  可写。用户数据（data/ logs/ profiles/ config/）
+  开发模式下两者都等于项目根，行为与改造前一致；
+  PyInstaller 冻结后自动分离，避开 Program Files 无写权限。
+- resolve() / path_of() 基于 DATA_ROOT；
+  resolve_app() 基于 APP_ROOT（只给浏览器内核等随包资源用）。
 - 支持点号路径访问：cfg.get("browser.headless", False)
 - 支持环境变量覆盖：OA_BROWSER__HEADLESS=true
 """
@@ -11,16 +17,95 @@ from __future__ import annotations
 
 import copy
 import os
+import shutil
+import sys
 import threading
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 import yaml
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "config.yaml"
+APP_NAME = "OutlookAutomation"
+
+#: 源码所在目录（开发模式的项目根）
+_SOURCE_ROOT = Path(__file__).resolve().parent.parent
+
+#: 是否运行在 PyInstaller 打包产物中
+FROZEN = bool(getattr(sys, "frozen", False))
+
+
+def _detect_app_root() -> Path:
+    """程序资源根目录（只读）。
+
+    onedir 打包下 EXE 旁边就是 Chromium/ 与 config.yaml.default，
+    所以用 EXE 所在目录，而不是 sys._MEIPASS（那是 _internal/）。
+    """
+    if FROZEN:
+        return Path(sys.executable).resolve().parent
+    return _SOURCE_ROOT
+
+
+def _detect_bundle_root() -> Path:
+    """PyInstaller 解包目录（内置 datas 所在）。开发模式 = 项目根。"""
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        return Path(meipass).resolve()
+    return _SOURCE_ROOT
+
+
+def _detect_data_root() -> Path:
+    """用户数据根目录（可写）。
+
+    优先级：OA_DATA_DIR 环境变量 > 冻结模式用 %APPDATA% > 开发模式用项目根。
+    OA_DATA_DIR 让便携模式和测试隔离成为可能。
+    """
+    override = os.environ.get("OA_DATA_DIR", "").strip()
+    if override:
+        return Path(os.path.expandvars(os.path.expanduser(override))).resolve()
+    if FROZEN:
+        base = os.environ.get("APPDATA") or os.environ.get("LOCALAPPDATA")
+        if base:
+            return Path(base).resolve() / APP_NAME
+        return Path.home() / f".{APP_NAME.lower()}"
+    return _SOURCE_ROOT
+
+
+APP_ROOT = _detect_app_root()
+BUNDLE_ROOT = _detect_bundle_root()
+DATA_ROOT = _detect_data_root()
+
+#: 向后兼容：旧代码引用的 PROJECT_ROOT 指程序资源根
+PROJECT_ROOT = APP_ROOT
+
+DEFAULT_CONFIG_PATH = DATA_ROOT / "config" / "config.yaml"
+
+#: 随包发布的默认配置（首次启动拷入 DATA_ROOT）
+_SEED_CONFIG_CANDIDATES = (
+    APP_ROOT / "config.yaml.default",
+    BUNDLE_ROOT / "config" / "config.yaml",
+)
 
 ENV_PREFIX = "OA_"
+
+
+def seed_user_config(target: Optional[Path] = None) -> Optional[Path]:
+    """首次启动：把随包默认配置拷到用户目录。
+
+    已存在则不动（升级不能覆盖用户配置）。返回实际写入路径，未写则 None。
+    """
+    dest = Path(target) if target else DEFAULT_CONFIG_PATH
+    if dest.is_file():
+        return None
+    for candidate in _SEED_CONFIG_CANDIDATES:
+        try:
+            if candidate.is_file() and candidate.resolve() != dest.resolve():
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(candidate, dest)
+                return dest
+        except OSError:
+            continue
+    return None
+
 
 _DEFAULTS: Dict[str, Any] = {
     "browser": {
@@ -74,6 +159,7 @@ _DEFAULTS: Dict[str, Any] = {
         "account_separator": "----",
     },
     "database": {"path": "data/app.db"},
+    "scheduler": {"enabled": False, "jobs": []},
     "logger": {
         "dir": "logs",
         "level": "INFO",
@@ -82,14 +168,11 @@ _DEFAULTS: Dict[str, Any] = {
         "max_bytes": 10485760,
         "backup_count": 5,
     },
-    "api": {
-        "enabled": True,
-        "host": "127.0.0.1",
-        "port": 8000,
-        "auth_enabled": True,
-        "token": "",
+    "desktop": {
+        "log_view_limit": 500,
+        "refresh_interval": 2000,
+        "table_page_size": 200,
     },
-    "scheduler": {"enabled": False, "jobs": []},
 }
 
 
@@ -191,24 +274,36 @@ class Config:
     # ---------- 路径 ----------
     @property
     def root(self) -> Path:
-        return PROJECT_ROOT
+        """程序资源根目录（只读）。"""
+        return APP_ROOT
+
+    @property
+    def data_root(self) -> Path:
+        """用户数据根目录（可写）。"""
+        return DATA_ROOT
 
     @property
     def source_path(self) -> Optional[Path]:
         return self._path
 
     def path_of(self, dotted: str, default: str = "") -> Path:
-        """读取配置中的路径值并解析为绝对路径。"""
+        """读取配置中的路径值并解析为绝对路径（基于 DATA_ROOT）。"""
         raw = str(self.get(dotted, default) or default)
         return self.resolve(raw)
 
     def resolve(self, raw: str) -> Path:
-        """相对路径基于项目根目录展开；绝对路径原样返回。"""
+        """相对路径基于用户数据目录展开；绝对路径原样返回。"""
         p = Path(os.path.expandvars(os.path.expanduser(str(raw))))
-        return p if p.is_absolute() else (PROJECT_ROOT / p)
+        return p if p.is_absolute() else (DATA_ROOT / p)
+
+    def resolve_app(self, raw: str) -> Path:
+        """相对路径基于程序资源目录展开（浏览器内核等随包文件）。"""
+        p = Path(os.path.expandvars(os.path.expanduser(str(raw))))
+        return p if p.is_absolute() else (APP_ROOT / p)
 
     def ensure_dirs(self) -> None:
         """创建运行所需目录。"""
+        DATA_ROOT.mkdir(parents=True, exist_ok=True)
         for dotted in ("logger.dir", "profile.root"):
             self.path_of(dotted).mkdir(parents=True, exist_ok=True)
         self.path_of("database.path").parent.mkdir(parents=True, exist_ok=True)
@@ -235,6 +330,13 @@ def load_config(path: Optional[str | Path] = None, use_cache: bool = True) -> Co
     if use_cache and path is None and _cached is not None:
         return _cached
 
+    if path is None:
+        # 冻结模式首次启动：把随包默认配置落到用户目录，否则用户无法修改
+        try:
+            seed_user_config()
+        except OSError:
+            pass
+
     cfg_path = Path(path) if path else DEFAULT_CONFIG_PATH
     raw: Dict[str, Any] = {}
     if cfg_path.is_file():
@@ -249,8 +351,8 @@ def load_config(path: Optional[str | Path] = None, use_cache: bool = True) -> Co
             print(f"=" * 60)
             print(f"[配置错误] {cfg_path} 解析失败，已回退内置默认配置！")
             print(f"  原因: {exc}")
-            print(f"  可在网页面板「配置」页重新设置并保存，或执行:")
-            print(f"  git checkout -- config/config.yaml")
+            print(f"  可在桌面程序「设置」页重新设置并保存，")
+            print(f"  或删除该文件让程序重建默认配置。")
             print(f"=" * 60)
 
     merged = _apply_env_overrides(_deep_merge(_DEFAULTS, raw))

@@ -1,0 +1,4 @@
+# 打包与开发辅助依赖（不进运行时安装包）
+-r requirements.txt
+pyinstaller==6.11.1
+pytest==8.3.4

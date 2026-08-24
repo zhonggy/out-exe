@@ -1,9 +1,10 @@
 # OutlookAutomation 配置文件
-# 所有路径均相对项目根目录（也可写绝对路径）
+# 相对路径基于用户数据目录（开发模式 = 项目根，打包后 = %APPDATA%\OutlookAutomation）
 
 browser:
-  # fingerprint-chromium 内核路径（支持 --fingerprint 指纹伪装）；留空 = patchright 自带 Chromium
-  executable_path: "browsers/fingerprint-chromium/ungoogled-chromium_148.0.7778.215-1.1_windows_x64/chrome.exe"
+  # 内核选择：fingerprint = 指纹内核（自动定位）| patchright = 自带 Chromium | 绝对路径
+  # 留空/auto = 先找指纹内核，没有则回退 patchright
+  executable_path: "fingerprint"
   headless: false
   timeout: 60000                # 默认操作超时（毫秒）
   nav_timeout: 45000            # 页面导航超时（毫秒）
@@ -66,13 +67,6 @@ logger:
   file: true
   max_bytes: 10485760           # 单日志文件 10MB 后轮转
   backup_count: 5
-
-api:
-  enabled: true
-  host: "127.0.0.1"             # 仅监听本机，勿改为 0.0.0.0
-  port: 8000
-  auth_enabled: true            # Token 认证，首次启动自动生成 data/api_token
-  token: ""                     # 留空则自动生成并写入 data/api_token
 
 scheduler:
   enabled: false

@@ -1,0 +1,258 @@
+name: Build Windows
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      skip_kernels:
+        description: '跳过 Chromium 内核（快速验证打包链路，产物不可用）'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  PYTHON_VERSION: '3.13'
+  # 内核版本锁定在此，与 scripts/setup_browser.py 的 PINNED_TAG 一致。
+  # 升级内核 = 改这两处 + 实测，而不是跟着上游 latest 漂。
+  FINGERPRINT_TAG: '148.0.7778.215-1.1'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      # ---------- 质量门禁：测试不过就不打包 ----------
+      - name: Unit tests
+        run: python -m pytest tests/ -q
+        env:
+          # 隔离到临时目录，避免测试写进仓库
+          OA_DATA_DIR: ${{ runner.temp }}\oa-test-data
+
+      - name: GUI smoke test
+        run: python tests/smoke_gui.py
+        env:
+          QT_QPA_PLATFORM: offscreen
+          OA_DATA_DIR: ${{ runner.temp }}\oa-smoke-data
+
+      - name: IPC smoke test
+        run: python tests/smoke_ipc.py
+        env:
+          OA_DATA_DIR: ${{ runner.temp }}\oa-ipc-data
+
+      - name: Worker process smoke test
+        run: python tests/smoke_worker.py
+        env:
+          OA_DATA_DIR: ${{ runner.temp }}\oa-worker-data
+
+      # ---------- Chromium 内核（体积大，走缓存） ----------
+      - name: Cache patchright Chromium
+        if: ${{ !inputs.skip_kernels }}
+        id: cache-playwright
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+
+      - name: Install patchright Chromium
+        if: ${{ !inputs.skip_kernels && steps.cache-playwright.outputs.cache-hit != 'true' }}
+        run: python -m patchright install chromium
+
+      - name: Cache fingerprint kernel
+        if: ${{ !inputs.skip_kernels }}
+        id: cache-fingerprint
+        uses: actions/cache@v4
+        with:
+          path: build\Chromium\fingerprint
+          key: fingerprint-${{ runner.os }}-${{ env.FINGERPRINT_TAG }}
+
+      - name: Download fingerprint kernel
+        if: ${{ !inputs.skip_kernels && steps.cache-fingerprint.outputs.cache-hit != 'true' }}
+        run: |
+          python scripts/setup_browser.py `
+            --tag "$env:FINGERPRINT_TAG" `
+            --dest build/Chromium/fingerprint `
+            --flatten
+        env:
+          # 匿名调 GitHub API 限 60 次/小时/IP，CI 上很容易撞限流
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare Chromium kernels
+        if: ${{ !inputs.skip_kernels }}
+        run: python scripts/prepare_chromium.py --skip-fingerprint
+
+      - name: Report kernel sizes
+        if: ${{ !inputs.skip_kernels }}
+        run: python scripts/prepare_chromium.py --report
+
+      # ---------- 打包 ----------
+      - name: PyInstaller
+        run: pyinstaller --noconfirm --clean build.spec
+
+      - name: Assemble dist
+        run: python scripts/assemble_dist.py --force
+
+      - name: Verify frozen executable
+        shell: pwsh
+        run: |
+          # 冻结产物的两条关键路径都要验：
+          #   1) --exec-worker 分支能起来（不能递归开 GUI）
+          #   2) 停止标志文件能让它优雅收尾（signal 在 windowed 进程里送不到）
+          $exe = "dist\OutlookAutomation\OutlookAutomation.exe"
+          if (-not (Test-Path $exe)) { throw "EXE not found: $exe" }
+
+          $data = "$env:RUNNER_TEMP\oa-frozen-data"
+          Remove-Item -Recurse -Force $data -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path "$data\data" | Out-Null
+          $env:OA_DATA_DIR = $data
+
+          # 没有账号时执行进程会立刻退出，先塞一个假账号让它常驻
+          python scripts/ci_seed_probe.py
+
+          $out = "$env:RUNNER_TEMP\frozen.out"
+          $err = "$env:RUNNER_TEMP\frozen.err"
+          $proc = Start-Process -FilePath $exe -ArgumentList "--exec-worker","--workers","1" `
+                    -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+
+          # 等它把 pid 文件写出来，证明 Worker 真的起了
+          $pidFile = "$data\data\worker.pid"
+          $ok = $false
+          foreach ($i in 1..60) {
+            if (Test-Path $pidFile) { $ok = $true; break }
+            if ($proc.HasExited) { break }
+            Start-Sleep -Milliseconds 500
+          }
+          Write-Host "--- stdout ---"
+          if (Test-Path $out) { Get-Content $out -Tail 40 }
+          Write-Host "--- stderr ---"
+          if (Test-Path $err) { Get-Content $err -Tail 40 }
+          if (-not $ok) {
+            throw "frozen worker did not start (no worker.pid). See output above."
+          }
+          $realPid = (Get-Content $pidFile -Raw).Trim()
+          Write-Host "frozen worker started, pid=$realPid"
+
+          # 优雅停止：写标志文件，主循环 2 秒内应看到
+          Set-Content -Path "$data\data\worker.stop" -Value "ci"
+          $gone = $false
+          foreach ($i in 1..40) {
+            if ($proc.HasExited) { $gone = $true; break }
+            Start-Sleep -Milliseconds 500
+          }
+          Write-Host "--- stdout after stop ---"
+          if (Test-Path $out) { Get-Content $out -Tail 20 }
+          if (-not $gone) {
+            $proc.Kill()
+            throw "frozen worker ignored the stop flag (would leak chrome.exe on stop)"
+          }
+          $tail = if (Test-Path $out) { Get-Content $out -Raw } else { "" }
+          if ($tail -notmatch "manager_stop") {
+            throw "frozen worker exited without running tm.stop() cleanup"
+          }
+          Write-Host "frozen worker stopped gracefully"
+
+          # 冻结产物里最容易缺的就是 driver，单独确认一次
+          $node = Get-ChildItem -Path "dist\OutlookAutomation" -Recurse -Filter "node.exe" -ErrorAction SilentlyContinue
+          if (-not $node) { throw "patchright driver node.exe missing in dist" }
+          Write-Host "node driver: $($node[0].FullName)"
+
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like "refs/tags/v*") {
+            $v = $env:GITHUB_REF -replace "^refs/tags/v",""
+          } else {
+            $v = "0.0.0-build$env:GITHUB_RUN_NUMBER"
+          }
+          Write-Host "version=$v"
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          # windows-latest 预装 Inno Setup 6（镜像 README 列的 InnoSetup 6.x）。
+          # 路径变过几次，多个候选位置都试一下，都没才报错。
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) {
+            $found = Get-Command iscc.exe -ErrorAction SilentlyContinue
+            if ($found) { $iscc = $found.Source }
+          }
+          if (-not $iscc) { throw "ISCC.exe not found. Checked: $($candidates -join '; ')" }
+          Write-Host "using: $iscc"
+          & $iscc installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
+        env:
+          OA_VERSION: ${{ steps.version.outputs.version }}
+
+      - name: Installer info
+        shell: pwsh
+        run: |
+          $setup = "dist\OutlookAutomation-Setup.exe"
+          if (-not (Test-Path $setup)) { throw "installer not found: $setup" }
+          $size = (Get-Item $setup).Length / 1MB
+          Write-Host ("installer size: {0:N1} MB" -f $size)
+          # GitHub Release 单文件上限 2GB
+          if ($size -gt 2000) { throw "installer exceeds GitHub 2GB limit" }
+
+      # ---------- 产物 ----------
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: OutlookAutomation-Setup-${{ steps.version.outputs.version }}
+          path: dist/OutlookAutomation-Setup.exe
+          retention-days: 30
+          if-no-files-found: error
+
+      # 未打包目录不上传：几百 MB，会迅速吃掉仓库存储配额。
+      # 需要调试时用 workflow_dispatch + skip_kernels 跑快速链路。
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/OutlookAutomation-Setup.exe
+          generate_release_notes: true
+          body: |
+            ## 安装
+
+            下载 `OutlookAutomation-Setup.exe` 并运行。
+
+            - 程序安装到 `C:\Program Files\OutlookAutomation`
+            - 用户数据在 `%APPDATA%\OutlookAutomation`，卸载默认保留、升级不覆盖
+            - 无需安装 Python、Node.js 或手动下载 Chromium
+
+            首次运行如被 SmartScreen 拦截（本程序未做代码签名），
+            点「更多信息」→「仍要运行」。
+
+            ## 说明
+
+            任务在独立进程中执行，关闭窗口不会中断；
+            要停止请在「任务管理」页点「停止执行」。

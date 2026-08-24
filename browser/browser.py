@@ -20,6 +20,7 @@ from .context import (
     build_proxy_option,
     random_viewport,
 )
+from .kernel import resolve_executable
 from .profile import ProfileManager, make_fingerprint_seed
 
 
@@ -137,12 +138,12 @@ class BrowserSession:
             if proxy_opt:
                 common["proxy"] = proxy_opt
 
-        executable_path = str(browser_cfg.get("executable_path") or "").strip()
+        executable_path = ""
+        try:
+            executable_path = resolve_executable(self.cfg, self.log)
+        except FileNotFoundError as exc:
+            raise BrowserLaunchError(str(exc)) from exc
         if executable_path:
-            import os
-
-            if not os.path.isfile(executable_path):
-                raise BrowserLaunchError(f"浏览器可执行文件不存在: {executable_path}")
             common["executable_path"] = executable_path
 
         ctx_opts = build_context_options(
@@ -190,7 +191,7 @@ class BrowserSession:
     def _log_launch(self, executable_path: str, seed: Optional[int], fp_enabled: bool) -> None:
         if not self.log:
             return
-        kernel = "custom-chromium" if executable_path else "patchright-chromium"
+        kernel = "fingerprint-chromium" if executable_path else "patchright-chromium"
         proxy_desc = self.proxy_url.split("//")[-1] if self.proxy_url else "direct"
         profile_desc = self.profile.profile_id if self.profile else "-"
         self.log.info(

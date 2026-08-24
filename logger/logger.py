@@ -1,7 +1,11 @@
-"""日志系统：控制台 + 文件轮转 + 内存环形缓冲（供面板实时查看）。
+"""日志系统：控制台 + 文件轮转 + 内存环形缓冲 + 可插拔 sink。
 
 日志行格式：
     [2026-08-21 13:07:38] [INFO ] [LOGIN] [password_input] task=12 acc=a@b.com 消息内容
+
+sink 机制：执行进程注册一个 IPC sink，日志就能实时推到 GUI。
+旧 Web 面板的缺陷是：缓冲区在执行进程内，面板进程读的是自己的空缓冲，
+所以根本看不到任务日志。
 """
 
 from __future__ import annotations
@@ -14,7 +18,7 @@ import time
 from collections import deque
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any, Deque, Dict, List, Optional
+from typing import Any, Callable, Deque, Dict, List, Optional
 
 LEVELS = {
     "DEBUG": logging.DEBUG,
@@ -27,15 +31,38 @@ LEVELS = {
     "CRITICAL": logging.CRITICAL,
 }
 
-# 环形缓冲：面板 /api/logs 直接读，避免反复读文件
+# 环形缓冲：日志页实时查看用，避免反复读文件
 _BUFFER_SIZE = 2000
 _buffer: Deque[Dict[str, Any]] = deque(maxlen=_BUFFER_SIZE)
 _buffer_lock = threading.Lock()
 _seq = 0
 
+# 额外消费者（如执行进程的 IPC 推送）。不在此处 import desktop，
+# 由入口层注册，保证 logger 对 GUI 层无依赖。
+_sinks: List[Callable[[Dict[str, Any]], None]] = []
+_sinks_lock = threading.Lock()
+
 _configured = False
 _config_lock = threading.Lock()
 _ROOT_NAME = "outlook_automation"
+
+
+def add_sink(sink: Callable[[Dict[str, Any]], None]) -> None:
+    """注册日志消费者。sink 内部必须自己保证不阻塞。"""
+    with _sinks_lock:
+        if sink not in _sinks:
+            _sinks.append(sink)
+
+
+def remove_sink(sink: Callable[[Dict[str, Any]], None]) -> None:
+    with _sinks_lock:
+        if sink in _sinks:
+            _sinks.remove(sink)
+
+
+def clear_sinks() -> None:
+    with _sinks_lock:
+        _sinks.clear()
 
 
 def _push_buffer(record: Dict[str, Any]) -> None:
@@ -44,10 +71,18 @@ def _push_buffer(record: Dict[str, Any]) -> None:
         _seq += 1
         record["seq"] = _seq
         _buffer.append(record)
+    with _sinks_lock:
+        sinks = list(_sinks)
+    for sink in sinks:
+        try:
+            sink(record)
+        except Exception:
+            # 日志推送失败绝不能影响业务流程
+            pass
 
 
 def get_buffer(after_seq: int = 0, limit: int = 200, level: Optional[str] = None) -> List[Dict[str, Any]]:
-    """读取内存日志。after_seq 用于增量拉取（面板轮询）。"""
+    """读取内存日志。after_seq 用于增量拉取（GUI 降级轮询）。"""
     want = (level or "").upper()
     with _buffer_lock:
         items = [r for r in _buffer if r["seq"] > after_seq]
