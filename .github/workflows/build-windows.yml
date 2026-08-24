@@ -25,7 +25,8 @@ env:
   PYTHONIOENCODING: 'utf-8'
   # 内核版本锁定在此，与 scripts/setup_browser.py 的 PINNED_TAG 一致。
   # 升级内核 = 改这两处 + 实测，而不是跟着上游 latest 漂。
-  FINGERPRINT_TAG: '148.0.7778.215-1.1'
+  # 注意是 release tag（纯版本号），不带资产文件名里的 -1.1 构建号。
+  FINGERPRINT_TAG: '148.0.7778.215'
 
 jobs:
   build:

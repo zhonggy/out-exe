@@ -30,7 +30,11 @@ REPO = "adryfish/fingerprint-chromium"
 RELEASES_API = f"https://api.github.com/repos/{REPO}/releases"
 
 #: 已验证可用的版本。升级时改这里并实测，不要依赖 latest。
-PINNED_TAG = "148.0.7778.215-1.1"
+#
+# 注意：这是 **release tag**，不带 -1.1 后缀。上游的 tag 是纯版本号
+# （如 148.0.7778.215），而资产文件名里多一个构建号
+# （ungoogled-chromium_148.0.7778.215-1.1_windows_x64.zip）。两者别混。
+PINNED_TAG = "148.0.7778.215"
 
 DEST_ROOT = ROOT / "browsers" / "fingerprint-chromium"
 
@@ -94,13 +98,22 @@ def find_release(tag: str) -> dict:
         except SystemExit:
             continue
 
-    # tag 名可能带前缀，退回遍历列表模糊匹配
+    # 精确匹配失败：遍历列表双向模糊匹配。
+    # 双向是必要的 —— 传入的可能是带构建号的资产版本
+    # （148.0.7778.215-1.1），而上游 tag 是纯版本号（148.0.7778.215）。
+    log(f"tag {tag} 精确匹配失败，尝试模糊匹配…")
     releases = api_request(f"{RELEASES_API}?per_page=100")
     if isinstance(releases, list):
         for release in releases:
-            if tag in str(release.get("tag_name", "")):
+            name = str(release.get("tag_name", ""))
+            if not name:
+                continue
+            if tag == name or tag in name or name in tag:
+                log(f"模糊匹配到 tag={name}")
                 return release
-    raise SystemExit(f"未找到版本 {tag}，可用 --tag latest 查看上游最新版")
+        available = ", ".join(str(r.get("tag_name")) for r in releases[:10])
+        raise SystemExit(f"未找到版本 {tag}。上游最近的 tag: {available}")
+    raise SystemExit(f"未找到版本 {tag}，且无法列出可用版本")
 
 
 def pick_asset(assets: list) -> dict:
