@@ -8,12 +8,17 @@ from __future__ import annotations
 
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import _console  # noqa: E402,F401  导入即把标准流切成 UTF-8
+
+import time  # noqa: E402
 
 CHILD_CODE = r"""
 import os, sys, time

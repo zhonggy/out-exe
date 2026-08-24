@@ -34,6 +34,31 @@ from database import get_db
 from logger import get_logger, setup_from_config
 
 
+def _force_utf8_streams() -> None:
+    """把标准流切成 UTF-8。必须在任何 print 之前执行。
+
+    本项目的日志与提示全是中文，而 Python 在 Windows 上给重定向的
+    stdout 用的是 locale 编码。GUI 拉起执行进程时把输出重定向到
+    logs/worker.out，若系统 locale 是 cp1252（英文版 Windows），
+    第一条中文 print 就会抛 UnicodeEncodeError —— Worker 直接起不来。
+
+    errors="replace" 而不是严格模式：日志里出个乱码可以接受，
+    因为写不出日志而停工不可以。
+    """
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            pass
+
+
+_force_utf8_streams()
+
+
 def _bootstrap():
     cfg = load_config()
     cfg.ensure_dirs()
@@ -222,11 +247,15 @@ def cmd_work(args) -> int:
 
     workers = args.workers or int(cfg.get("system.max_workers", 3))
     tm.start(workers=workers, restore=not args.no_restore)
-    _ipc_send({"kind": "hello", "ts": time.time(), "pid": os.getpid(), "workers": workers})
 
+    # 先写 PID 文件再发 hello：GUI 收到 hello 就会认为执行进程就绪，
+    # 而它接管/停止都依赖 PID 文件。反过来会有一个窗口期：
+    # GUI 已知道进程跑了，却读不到 PID。
     pid_file = cfg.resolve("data/worker.pid")
     pid_file.parent.mkdir(parents=True, exist_ok=True)
     pid_file.write_text(str(os.getpid()), encoding="utf-8")
+
+    _ipc_send({"kind": "hello", "ts": time.time(), "pid": os.getpid(), "workers": workers})
     print(f"[WORKER] 已启动 {workers} 个 Worker，PID={os.getpid()}，等待任务...")
 
     try:

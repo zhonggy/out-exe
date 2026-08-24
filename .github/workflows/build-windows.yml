@@ -18,6 +18,11 @@ permissions:
 
 env:
   PYTHON_VERSION: '3.13'
+  # Windows runner 的 locale 是 cp1252，Python 3.13 的 stdout 仍跟 locale。
+  # 本项目日志与提示全是中文，不设 UTF-8 会在 print() 处抛
+  # UnicodeEncodeError，把正常的测试/构建拖成失败。
+  PYTHONUTF8: '1'
+  PYTHONIOENCODING: 'utf-8'
   # 内核版本锁定在此，与 scripts/setup_browser.py 的 PINNED_TAG 一致。
   # 升级内核 = 改这两处 + 实测，而不是跟着上游 latest 漂。
   FINGERPRINT_TAG: '148.0.7778.215-1.1'

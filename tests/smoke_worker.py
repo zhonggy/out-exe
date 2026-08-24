@@ -11,12 +11,17 @@ from __future__ import annotations
 
 import os
 import sys
-import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import _console  # noqa: E402,F401  导入即把标准流切成 UTF-8
+
+import time  # noqa: E402
 
 
 def main() -> int:
@@ -81,11 +86,23 @@ def main() -> int:
     logs = [m for m in messages if m.get("kind") == "log"]
     print(f"[OK] 实时日志      {len(logs)} 条（IPC 推送链路通）")
 
-    # PID 文件接管：新建一个 manager 应能识别到在跑的进程
+    # PID 文件接管：新建一个 manager 应能识别到在跑的进程。
+    # 执行进程先写 PID 再发 hello，所以此时应该已可读；
+    # 给一点宽容应对文件系统写入可见性延迟。
     other = WorkerProcessManager(cfg, log=log)
-    alive, pid = other.external_alive()
+    alive = False
+    pid = 0
+    for _ in range(20):
+        alive, pid = other.external_alive()
+        if alive:
+            break
+        time.sleep(0.25)
     if not alive:
+        pf = cfg.resolve("data/worker.pid")
         print("[FAIL] PID 文件接管失效 —— GUI 重启后无法识别在跑的执行进程")
+        print(f"       pid 文件: {pf} exists={pf.is_file()}")
+        if pf.is_file():
+            print(f"       内容: {pf.read_text(encoding='utf-8', errors='replace')!r}")
         wpm.stop()
         server.stop()
         return 1
