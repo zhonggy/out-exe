@@ -269,8 +269,9 @@ SQLite 全部表 CRUD、账号解析与导入、任务优先级队列与恢复�
 **argv 分流（冻结/开发两种模式）**、**IPC 编解码（分帧、半包、坏行、中文）**。
 
 ```bash
-python tests/smoke_feedback.py    # 每个操作按钮都必须有可见反馈
-python tests/smoke_proxy_ui.py    # 代理页保存/测试的完整交互
+python tests/smoke_feedback.py      # 每个操作按钮都必须有可见反馈
+python tests/smoke_proxy_ui.py      # 代理页保存/测试的完整交互
+python tests/smoke_list_refresh.py  # 数据变更后列表正确刷新
 ```
 
 冒烟测试覆盖：
@@ -285,8 +286,11 @@ python tests/smoke_proxy_ui.py    # 代理页保存/测试的完整交互
   它会准确报出 10 项无反馈
 - **smoke_proxy_ui** — 代理页保存后配置真的落盘（重读文件验证）、
   测试连接有明确成败反馈、按钮状态正确恢复
+- **smoke_list_refresh** — 数据变更后列表必须跟着变：过时响应被丢弃、
+  导入时残留的筛选/搜索/翻页被重置、越界页自动回第一页。
+  同样是防回归测试，回退修复后它报出 6 项失败
 
-CI 上这五项都是打包的前置门禁，任一失败不产出安装包。
+CI 上这六项都是打包的前置门禁，任一失败不产出安装包。
 
 端到端也已实测：headless 双 Worker 并发跑 4 个任务全部 COMPLETED，
 断点按 `BROWSER_STARTED → LOGIN_PAGE → COMPLETED` 落库，浏览器与 profile 正常回收。

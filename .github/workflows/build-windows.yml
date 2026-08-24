@@ -86,6 +86,12 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           OA_DATA_DIR: ${{ runner.temp }}\oa-proxy-data
 
+      - name: List refresh smoke test
+        run: python tests/smoke_list_refresh.py
+        env:
+          QT_QPA_PLATFORM: offscreen
+          OA_DATA_DIR: ${{ runner.temp }}\oa-list-data
+
       # ---------- Chromium 内核（体积大，走缓存） ----------
       - name: Cache patchright Chromium
         if: ${{ !inputs.skip_kernels }}

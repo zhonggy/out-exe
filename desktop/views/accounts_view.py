@@ -192,7 +192,16 @@ class AddAccountDialog(QDialog):
 
 
 class AccountsView(QWidget):
-    """账号列表 + 导入/删除/重置/导出。"""
+    """账号列表 + 导入/删除/重置/导出。
+
+    两个曾导致「导入后仪表盘有数、列表却空」的坑，都在这里处理：
+
+    1. **过时响应**：刷新是异步的，多个查询可能同时在飞（切页、定时刷新、
+       导入后刷新）。旧查询后到会把新结果覆盖掉。用世代号丢弃过时响应。
+    2. **筛选残留**：用户之前选了状态筛选或输了搜索词，导入的新账号是 NEW
+       且账号名不匹配，于是被挡在视图外 —— 数据在库里，列表就是不显示。
+       导入类操作会重置筛选与分页，并明确告知用户。
+    """
 
     #: 请求主窗口刷新仪表盘（账号数变化会影响那边的指标）
     data_changed = Signal()
@@ -203,6 +212,7 @@ class AccountsView(QWidget):
         self._page_size = int(context.cfg.get("desktop.table_page_size", 200) or 200)
         self._offset = 0
         self._total = 0
+        self._request_seq = 0
         self._build()
         self.refresh()
 
@@ -300,6 +310,9 @@ class AccountsView(QWidget):
         page_size = self._page_size
         offset = self._offset
 
+        self._request_seq += 1
+        seq = self._request_seq
+
         def work():
             # 关键字搜索没有 SQL 索引支持，拉一批再内存过滤；
             # 无关键字时走分页，避免一次拉全表
@@ -317,7 +330,7 @@ class AccountsView(QWidget):
                 page = self.ctx.am.list(
                     status=status or None, limit=page_size, offset=offset
                 )
-            return total, [a.to_dict() for a in page]
+            return seq, total, [a.to_dict() for a in page]
 
         run_async(
             work,
@@ -326,8 +339,20 @@ class AccountsView(QWidget):
         )
 
     def _on_rows(self, payload) -> None:
-        total, rows = payload
+        seq, total, rows = payload
+        # 丢弃过时响应：慢的旧查询后到会覆盖掉刚刚拿到的新结果
+        if seq != self._request_seq:
+            return
+
         self._total = total
+
+        # 页码越界（删了很多行、或换了筛选）时回到第一页重查，
+        # 否则用户会看到一个空页而误以为数据没了
+        if rows == [] and total > 0 and self._offset > 0:
+            self._offset = 0
+            self.refresh()
+            return
+
         self.model.set_rows(rows)
         start = self._offset + 1 if rows else 0
         end = self._offset + len(rows)
@@ -355,7 +380,7 @@ class AccountsView(QWidget):
 
         run_async(
             work,
-            on_result=lambda r: self._after_change(
+            on_result=lambda r: self._after_import(
                 f"已导入 {r.get('imported', 0)} 条，跳过 {r.get('skipped', 0)} 条"
             ),
             on_error=lambda msg: error(self, "导入失败", msg),
@@ -375,7 +400,7 @@ class AccountsView(QWidget):
 
         run_async(
             lambda: self.ctx.am.import_file(target),
-            on_result=lambda r: self._after_change(
+            on_result=lambda r: self._after_import(
                 f"已导入 {r.get('imported', 0)} 条，跳过 {r.get('skipped', 0)} 条"
             ),
             on_error=lambda msg: error(self, "导入失败", msg),
@@ -394,7 +419,7 @@ class AccountsView(QWidget):
             lambda: self.ctx.am.add(
                 values["account"], values["password"], values["note"]
             ),
-            on_result=lambda _: self._after_change(f"已添加 {values['account']}"),
+            on_result=lambda _: self._after_import(f"已添加 {values['account']}"),
             on_error=lambda msg: error(self, "添加失败", msg),
         )
 
@@ -460,6 +485,36 @@ class AccountsView(QWidget):
             on_result=lambda p: info(self, "导出完成", f"已导出到：\n{p}"),
             on_error=lambda msg: error(self, "导出失败", msg),
         )
+
+    def _reset_view_filters(self) -> str:
+        """清空搜索与状态筛选、回到第一页。
+
+        导入的新账号状态是 NEW、账号名任意，残留的筛选会把它们全挡在视图外，
+        用户看到的就是「仪表盘涨了但列表没变化」。返回被清掉了什么，
+        以便在提示里说明——静默改动用户的筛选条件同样会让人困惑。
+        """
+        cleared = []
+        if self.search.text().strip():
+            self.search.clear()
+            cleared.append("搜索")
+        if self.status_filter.currentIndex() != 0:
+            self.status_filter.blockSignals(True)
+            self.status_filter.setCurrentIndex(0)
+            self.status_filter.blockSignals(False)
+            cleared.append("状态筛选")
+        if self._offset:
+            self._offset = 0
+            cleared.append("翻页")
+        return "、".join(cleared)
+
+    def _after_import(self, message: str) -> None:
+        """导入类操作的收尾：重置筛选，确保新账号立刻可见。"""
+        cleared = self._reset_view_filters()
+        if cleared:
+            message = f"{message}（已清除{cleared}以显示新账号）"
+        self.refresh()
+        self.data_changed.emit()
+        notify(self, message)
 
     def _after_change(self, message: str) -> None:
         self.refresh()

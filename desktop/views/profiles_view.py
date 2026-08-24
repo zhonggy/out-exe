@@ -115,6 +115,9 @@ class ProfilesView(QWidget):
     def __init__(self, context, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.ctx = context
+        # 目录扫描 + 体积统计较慢，与定时刷新并发时旧结果容易后到
+        self._request_seq = 0
+        self._all_rows: List[Dict[str, Any]] = []
         self._build()
         self.refresh()
 
@@ -174,6 +177,9 @@ class ProfilesView(QWidget):
 
     # ---------- 刷新 ----------
     def refresh(self) -> None:
+        self._request_seq += 1
+        seq = self._request_seq
+
         def work():
             dirs = self.ctx.pm.list_dirs()
             # 交叉查库：磁盘扫描看不出是哪个账号、是否被别的进程占用
@@ -198,7 +204,7 @@ class ProfilesView(QWidget):
                         "state": state,
                     }
                 )
-            return rows
+            return seq, rows
 
         run_async(
             work,
@@ -206,7 +212,10 @@ class ProfilesView(QWidget):
             on_error=lambda msg: error(self, "加载 Profile 失败", msg),
         )
 
-    def _on_rows(self, rows: List[Dict[str, Any]]) -> None:
+    def _on_rows(self, payload) -> None:
+        seq, rows = payload
+        if seq != self._request_seq:
+            return          # 丢弃过时响应
         self._all_rows = rows
         total_bytes = sum(r.get("size_bytes", 0) for r in rows)
         temp_count = sum(1 for r in rows if r.get("temporary"))
@@ -216,7 +225,7 @@ class ProfilesView(QWidget):
         self._rerender()
 
     def _rerender(self) -> None:
-        rows = getattr(self, "_all_rows", [])
+        rows = self._all_rows
         if self.only_temp.isChecked():
             rows = [r for r in rows if r.get("temporary")]
         self.model.set_rows(rows)

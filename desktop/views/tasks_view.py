@@ -187,6 +187,8 @@ class TasksView(QWidget):
     def __init__(self, context, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.ctx = context
+        # 与账号页同理：定时刷新与切筛选可能并发，旧查询后到会覆盖新结果
+        self._request_seq = 0
         self._build()
         self.refresh()
 
@@ -298,17 +300,25 @@ class TasksView(QWidget):
     # ---------- 刷新 ----------
     def refresh(self) -> None:
         status = str(self.status_filter.currentData() or "")
+        self._request_seq += 1
+        seq = self._request_seq
 
         def work():
             tasks = self.ctx.db.list_tasks(status=status or None, limit=500)
-            return [t.to_dict() for t in tasks]
+            return seq, [t.to_dict() for t in tasks]
 
         run_async(
             work,
-            on_result=self.model.set_rows,
+            on_result=self._on_rows,
             on_error=lambda msg: error(self, "加载任务失败", msg),
         )
         self.update_state(self.ctx.stats_snapshot())
+
+    def _on_rows(self, payload) -> None:
+        seq, rows = payload
+        if seq != self._request_seq:
+            return          # 丢弃过时响应
+        self.model.set_rows(rows)
 
     def update_state(self, snapshot: Dict[str, Any]) -> None:
         """由主窗口定时器统一驱动，避免各页各起一个定时器。"""
