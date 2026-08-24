@@ -242,9 +242,15 @@ jobs:
           $setup = "dist\OutlookAutomation-Setup.exe"
           if (-not (Test-Path $setup)) { throw "installer not found: $setup" }
           $size = (Get-Item $setup).Length / 1MB
-          Write-Host ("installer size: {0:N1} MB" -f $size)
+          $installed = (Get-ChildItem -Recurse "dist\OutlookAutomation" |
+                        Measure-Object -Property Length -Sum).Sum / 1MB
+          Write-Host ("installer   : {0:N1} MB" -f $size)
+          Write-Host ("installed   : {0:N1} MB" -f $installed)
+          Write-Host ("compression : {0:N1}x" -f ($installed / $size))
           # GitHub Release 单文件上限 2GB
           if ($size -gt 2000) { throw "installer exceeds GitHub 2GB limit" }
+          # 体积异常偏小通常意味着内核没进去
+          if ($size -lt 150) { throw ("installer suspiciously small ({0:N1} MB) - kernels missing?" -f $size) }
 
       # ---------- 产物 ----------
       - name: Upload installer

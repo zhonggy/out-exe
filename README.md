@@ -297,9 +297,13 @@ iscc installer.iss                      # 生成安装包
 （约 96MB），onefile 下每次启动都要解压；双进程模型下两个进程各解压一份，
 磁盘与启动时间都翻倍，且杀软对自解压行为误报率高。
 
-安装包约 400-500MB（LZMA2 压缩），安装后占用约 800-850MB —— 两个 Chromium 内核
-（指纹 425MB + 备用 332MB）是主要体积。已剔除 `chromium_headless_shell`（197MB）
-和 `ffmpeg`，本项目不需要。
+实测体积（v1.0.0）：安装包 **289MB**。主要构成是两个 Chromium 内核
+（指纹 425MB + 备用 331MB）、PySide6 运行时、patchright driver（96MB，含 node.exe）。
+已剔除 `chromium_headless_shell`（197MB）与 `ffmpeg` —— 本项目 headless=false
+且不录屏，用不到。
+
+两个内核缺任一个就构建失败（而不是警告）：选双内核就是为了指纹内核失效时
+能切备用，静默少一个等于发了个没退路的包。
 
 ## 扩展新流程
 
