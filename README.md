@@ -9,11 +9,12 @@
 ## 给最终用户
 
 从 [Releases](https://github.com/zhonggy/out-exe/releases) 下载
-`OutlookAutomation-Setup.exe`，安装后双击桌面图标即可。
+`OutlookAutomation-Setup.exe`（约 289MB），安装后双击桌面图标即可。
 不需要安装 Python、Node.js，也不需要手动下载 Chromium。
 
 - 程序装在 `C:\Program Files\OutlookAutomation`（只读）
 - 用户数据在 `%APPDATA%\OutlookAutomation`（卸载默认保留，升级不覆盖）
+- 首次运行会被 SmartScreen 拦（未做代码签名），点「更多信息」→「仍要运行」
 
 ## 给开发者
 
