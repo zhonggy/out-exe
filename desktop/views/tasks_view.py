@@ -42,6 +42,7 @@ from .widgets import (
     human_duration,
     human_time,
     info,
+    notify,
     title_label,
     toolbar,
 )
@@ -385,8 +386,36 @@ class TasksView(QWidget):
         )
 
     def _on_control_result(self, result: Dict[str, Any]) -> None:
-        if isinstance(result, dict) and not result.get("ok", True):
-            error(self, "操作未完成", str(result.get("error") or "未知原因"))
+        """开始/停止/重启的统一反馈。
+
+        wpm.start/stop 失败时是返回 {"ok": False} 而不抛异常，
+        所以必须在这里判 ok，否则失败会完全静默。
+        """
+        if not isinstance(result, dict):
+            self.refresh()
+            self.data_changed.emit()
+            return
+
+        if not result.get("ok", True):
+            reason = str(result.get("error") or "未知原因")
+            error(self, "操作未完成", reason)
+            notify(self, f"操作失败：{reason}", "error")
+        elif result.get("already"):
+            notify(self, "执行进程已在运行", "warn")
+        elif "stopped" in result:
+            stopped = result.get("stopped") or []
+            if stopped:
+                how = "优雅停止" if result.get("graceful") else "强制结束"
+                notify(self, f"执行进程已{how}（PID {', '.join(map(str, stopped))}）")
+            else:
+                notify(self, "没有正在运行的执行进程", "warn")
+        elif result.get("pid"):
+            notify(
+                self,
+                f"执行进程已启动（PID {result['pid']}，"
+                f"{result.get('workers', '?')} 个 Worker）",
+            )
+
         self.refresh()
         self.data_changed.emit()
 
@@ -434,11 +463,17 @@ class TasksView(QWidget):
 
     def _on_dispatched(self, count: int) -> None:
         if not count:
-            info(self, "派发任务", "没有可派发的账号（可能都已处理完）")
+            info(
+                self,
+                "派发任务",
+                "没有可派发的账号。\n\n"
+                "可能原因：账号都已处理完（在账号页选中后点「重置状态」可重跑），"
+                "或还没导入账号。",
+            )
+            notify(self, "派发任务：无可派发的账号", "warn")
         else:
-            window = self.window()
-            if hasattr(window, "show_status"):
-                window.show_status(f"已派发 {count} 个任务")
+            info(self, "派发成功", f"已派发 {count} 个任务。\n\n点「开始执行」启动 Worker。")
+            notify(self, f"已派发 {count} 个任务")
         self.refresh()
         self.data_changed.emit()
 
@@ -514,6 +549,4 @@ class TasksView(QWidget):
     def _after_change(self, message: str) -> None:
         self.refresh()
         self.data_changed.emit()
-        window = self.window()
-        if hasattr(window, "show_status"):
-            window.show_status(message)
+        notify(self, message)

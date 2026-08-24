@@ -7,12 +7,24 @@ GUI 进程不开浏览器，但仍有两类阻塞操作会卡住窗口：
 
 ``database/sqlite.py`` 是共享单连接 + RLock，写入互斥串行，所以后台任务里的
 大事务要分批提交，避免把锁抽住影响另一进程的 Worker。
+
+**生命周期陷阱（曾导致所有回调静默丢失）**
+
+``QThreadPool.start()`` 默认接管 QRunnable 并在 ``run()`` 返回后删除它。
+若 Python 侧不保留引用，任务对象会被 GC，它持有的 ``WorkerSignals``
+一起销毁 —— 已排队但尚未投递到主线程的信号全部被丢弃。
+表现是：业务函数确实执行了（配置真的保存了），但 ``on_result`` /
+``on_done`` 一次都不触发，于是没有成功提示、按钮永久停在禁用状态。
+
+所以这里做两件事：关掉 autoDelete，并把在飞任务登记进模块级集合，
+收到 ``done`` 后再移除。
 """
 
 from __future__ import annotations
 
+import threading
 import traceback
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Set
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 
@@ -26,6 +38,27 @@ class WorkerSignals(QObject):
     done = Signal()                    # 无论成败都触发，用于恢复按钮状态
 
 
+#: 在飞任务登记表。防止任务对象被 GC 导致信号投递丢失。
+_inflight: Set["BackgroundTask"] = set()
+_inflight_lock = threading.Lock()
+
+
+def _register(task: "BackgroundTask") -> None:
+    with _inflight_lock:
+        _inflight.add(task)
+
+
+def _unregister(task: "BackgroundTask") -> None:
+    with _inflight_lock:
+        _inflight.discard(task)
+
+
+def inflight_count() -> int:
+    """在飞任务数。供测试与状态栏使用。"""
+    with _inflight_lock:
+        return len(_inflight)
+
+
 class BackgroundTask(QRunnable):
     """在线程池中执行一个可调用对象。
 
@@ -35,6 +68,8 @@ class BackgroundTask(QRunnable):
 
     def __init__(self, fn: Callable[..., Any], *args: Any, **kwargs: Any):
         super().__init__()
+        # 不让 Qt 删除本对象：Python 侧仍需它活到信号投递完成
+        self.setAutoDelete(False)
         self.signals = WorkerSignals()
         self._fn = fn
         self._args = args
@@ -86,7 +121,10 @@ def run_async(
     pool: Optional[QThreadPool] = None,
     **kwargs: Any,
 ) -> BackgroundTask:
-    """提交后台任务并连接回调。回调都在主线程执行。"""
+    """提交后台任务并连接回调。回调都在主线程执行。
+
+    调用方无需保留返回值 —— 任务在完成前由模块内部持有引用。
+    """
     task = BackgroundTask(fn, *args, **kwargs)
     if on_result is not None:
         task.signals.finished.connect(on_result)
@@ -96,5 +134,16 @@ def run_async(
         task.signals.progress.connect(on_progress)
     if on_done is not None:
         task.signals.done.connect(on_done)
+
+    # 登记必须在 start 之前：任务可能瞬间完成
+    _register(task)
+    # 用默认参数绑定 task，避免闭包捕获导致的循环引用歧义
+    task.signals.done.connect(lambda t=task: _unregister(t))
+
     (pool or QThreadPool.globalInstance()).start(task)
     return task
+
+
+def wait_for_idle(timeout_ms: int = 5000, pool: Optional[QThreadPool] = None) -> bool:
+    """等待线程池空闲。仅供测试与退出前收尾使用，不要在 UI 线程常规调用。"""
+    return (pool or QThreadPool.globalInstance()).waitForDone(timeout_ms)

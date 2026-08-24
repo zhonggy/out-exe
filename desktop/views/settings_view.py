@@ -36,6 +36,7 @@ from .widgets import (
     error,
     hint_label,
     info,
+    notify,
     title_label,
     toolbar,
 )
@@ -376,8 +377,10 @@ class SettingsView(QWidget):
                 "执行进程启动时读取配置，Worker 数、浏览器与流程相关设置"
                 "需重启执行进程才生效。",
             )
+            notify(self, "设置已保存（需重启执行进程生效）", "warn")
         else:
             info(self, "已保存", f"配置已写入：\n{path}")
+            notify(self, "设置已保存")
         window = self.window()
         if hasattr(window, "reload_runtime_settings"):
             window.reload_runtime_settings()

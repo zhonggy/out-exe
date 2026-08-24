@@ -90,6 +90,17 @@ hiddenimports += [
     "task",
 ]
 
+# requests 在 proxy/ 里是函数内局部 import（延迟加载），顶层拓不到。
+# 缺了代理测试与 IP 查询会在运行时报 ImportError，而且只在用户
+# 点测试那一刻才暴露。
+hiddenimports += [
+    "requests",
+    "urllib3",
+    "certifi",
+    "charset_normalizer",
+    "idna",
+]
+
 
 # ---------------------------------------------------------------- excludes
 # 这些不参与运行，排掉能显著减小体积

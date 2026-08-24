@@ -38,6 +38,7 @@ from .widgets import (
     error,
     hint_label,
     info,
+    notify,
     title_label,
     toolbar,
 )
@@ -353,8 +354,10 @@ class ProxyView(QWidget):
                     "已保存",
                     f"{message}。\n\n执行进程正在运行，需重启后生效。",
                 )
+                notify(self, f"{message}（需重启执行进程生效）", "warn")
             else:
                 info(self, "已保存", message)
+                notify(self, message)
 
         run_async(work, on_result=done, on_error=lambda msg: error(self, "保存失败", msg))
 
@@ -362,9 +365,14 @@ class ProxyView(QWidget):
     def _on_reset_stats(self) -> None:
         if not confirm(self, "重置统计", "清空 IP 成功率统计与黑名单。继续？"):
             return
+        def done(_):
+            self.refresh()
+            info(self, "已重置", "IP 成功率统计与黑名单已清空。")
+            notify(self, "代理表现统计已重置")
+
         run_async(
             self.ctx.proxy.reset,
-            on_result=lambda _: self.refresh(),
+            on_result=done,
             on_error=lambda msg: error(self, "重置失败", msg),
         )
 
@@ -375,9 +383,13 @@ class ProxyView(QWidget):
                 return "当前配置为直连，未取到代理"
             return f"取到代理：{url}"
 
+        def done(text):
+            info(self, "试取代理", str(text))
+            notify(self, str(text))
+
         run_async(
             work,
-            on_result=lambda text: info(self, "试取代理", str(text)),
+            on_result=done,
             on_error=lambda msg: error(self, "试取失败", msg),
         )
 
@@ -388,7 +400,12 @@ class ProxyView(QWidget):
             return
 
         self.btn_test_resin.setEnabled(False)
-        self.resin_result.setPlainText("测试中…（最长约 20 秒）")
+        self.btn_test_resin.setText("测试中…")
+        self.resin_result.setPlainText(
+            "正在测试（最长约 60 秒）…\n"
+            "依次尝试 ipinfo.io / ipify.org / ip-api.com 三个探测端点，"
+            "并进行两次查询验证粘性。"
+        )
 
         config = {
             "enabled": True,
@@ -404,9 +421,11 @@ class ProxyView(QWidget):
             return Resin(config).test_connection()
 
         def done(result: Dict[str, Any]) -> None:
+            # test_connection 失败时是正常返回 {"ok": False}，不抛异常，
+            # 所以这里必须自己判 ok；只靠 on_error 会让失败静默掉。
             ok = bool(result.get("ok"))
-            prefix = "成功" if ok else "失败"
-            lines = [f"[{prefix}] {result.get('detail') or ''}"]
+            detail = str(result.get("detail") or "")
+            lines = [f"[{'成功' if ok else '失败'}] {detail}"]
             if ok:
                 lines.append(
                     f"出口 IP: {result.get('ip')} · 端点: {result.get('endpoint')} · "
@@ -414,9 +433,44 @@ class ProxyView(QWidget):
                 )
             self.resin_result.setPlainText("\n".join(lines))
 
+            notify(
+                self,
+                f"Resin 测试{'成功' if ok else '失败'}",
+                "ok" if ok else "error",
+            )
+            if ok:
+                sticky = result.get("sticky")
+                info(
+                    self,
+                    "测试成功",
+                    f"出口 IP：{result.get('ip')}\n"
+                    f"探测端点：{result.get('endpoint')}\n"
+                    f"粘性：{'正常' if sticky else '异常 —— 两次查询 IP 不一致'}",
+                )
+            else:
+                error(
+                    self,
+                    "测试失败",
+                    f"{detail}\n\n"
+                    "常见原因：Resin 未启动、地址或 Token 错误、本机防火墙拦截。",
+                )
+
+        def failed(message: str) -> None:
+            # 这条路径是代码层异常（如缺依赖），不是连接失败
+            self.resin_result.setPlainText(f"[异常] {message}")
+            error(
+                self,
+                "测试出错",
+                f"{message}\n\n这是程序异常而非连接失败，请反馈此信息。",
+            )
+
+        def restore() -> None:
+            self.btn_test_resin.setEnabled(True)
+            self.btn_test_resin.setText("测试连接")
+
         run_async(
             work,
             on_result=done,
-            on_error=lambda msg: self.resin_result.setPlainText(f"[失败] {msg}"),
-            on_done=lambda: self.btn_test_resin.setEnabled(True),
+            on_error=failed,
+            on_done=restore,
         )

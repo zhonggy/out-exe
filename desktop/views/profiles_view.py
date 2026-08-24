@@ -37,6 +37,7 @@ from .widgets import (
     human_bytes,
     human_time,
     info,
+    notify,
     title_label,
     toolbar,
 )
@@ -279,6 +280,4 @@ class ProfilesView(QWidget):
     def _after_change(self, message: str) -> None:
         self.refresh()
         self.data_changed.emit()
-        window = self.window()
-        if hasattr(window, "show_status"):
-            window.show_status(message)
+        notify(self, message)

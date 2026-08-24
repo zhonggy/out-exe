@@ -130,6 +130,18 @@ def button(
     return btn
 
 
+def notify(widget: QWidget, message: str, level: str = "ok") -> None:
+    """向主窗口状态栏回报操作结果。
+
+    页面可能被单独构造（测试场景），此时 window() 没有 show_status，
+    因此需要容错。
+    """
+    window = widget.window()
+    handler = getattr(window, "show_status", None)
+    if handler is not None:
+        handler(message, level)
+
+
 def confirm(parent: QWidget, title: str, text: str, danger: bool = False) -> bool:
     """确认对话框。危险操作默认焦点在"取消"上，避免手滑回车。"""
     box = QMessageBox(parent)

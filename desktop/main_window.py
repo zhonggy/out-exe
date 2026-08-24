@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from PySide6.QtCore import Qt, QTimer
@@ -21,7 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .theme import COLOR_OK, COLOR_RUNNING, COLOR_WARN, TEXT_DIM
+from .theme import COLOR_FAIL, COLOR_OK, COLOR_RUNNING, COLOR_WARN, TEXT_DIM
 from .views import (
     AccountsView,
     BrowserView,
@@ -109,6 +110,12 @@ class MainWindow(QMainWindow):
         bar.addPermanentWidget(self.status_ipc)
         bar.addPermanentWidget(self.status_data)
 
+        # 操作提示几秒后恢复为“就绪”，否则旧消息一直留在那里，
+        # 用户分不清是本次操作的反馈还是上一次的。
+        self._status_reset_timer = QTimer(self)
+        self._status_reset_timer.setSingleShot(True)
+        self._status_reset_timer.timeout.connect(self._reset_status_message)
+
     # ---------- 定时刷新 ----------
     def _start_timers(self) -> None:
         interval = int(self.ctx.cfg.get("desktop.refresh_interval", 2000) or 2000)
@@ -167,9 +174,25 @@ class MainWindow(QMainWindow):
         if page is not None and hasattr(page, "refresh"):
             page.refresh()
 
-    def show_status(self, message: str) -> None:
-        """页面回报操作结果。"""
-        self.status_message.setText(message)
+    def show_status(self, message: str, level: str = "ok") -> None:
+        """页面回报操作结果。
+
+        带时间戳与颜色：状态栏在窗口底部，纯文本变化很容易被忽略，
+        用户会以为“点了没反应”。
+        """
+        color = {
+            "ok": COLOR_OK,
+            "warn": COLOR_WARN,
+            "error": COLOR_FAIL,
+        }.get(level, COLOR_OK)
+        stamp = time.strftime("%H:%M:%S")
+        self.status_message.setText(f"{stamp}  {message}")
+        self.status_message.setStyleSheet(f"color: {color}; font-weight: 600;")
+        self._status_reset_timer.start(8000)
+
+    def _reset_status_message(self) -> None:
+        self.status_message.setText("就绪")
+        self.status_message.setStyleSheet(f"color: {TEXT_DIM};")
 
     def reload_runtime_settings(self) -> None:
         """设置页保存后调用：应用影响 GUI 自身的配置。"""

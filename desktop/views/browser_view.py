@@ -32,6 +32,7 @@ from .widgets import (
     error,
     hint_label,
     info,
+    notify,
     title_label,
     toolbar,
 )
@@ -168,6 +169,7 @@ class BrowserView(QWidget):
             self.ctx.cfg.update({"browser": {"executable_path": value}}, save=True)
             return value
 
+
         def done(_):
             self.refresh()
             if running:
@@ -177,8 +179,10 @@ class BrowserView(QWidget):
                     "配置已保存。执行进程正在运行，需重启后生效"
                     "（任务管理页 → 重启执行进程）。",
                 )
+                notify(self, f"内核已切换为 {value}（需重启执行进程）", "warn")
             else:
                 info(self, "内核已切换", "配置已保存，下次启动生效。")
+                notify(self, f"内核已切换为 {value}")
 
         run_async(work, on_result=done, on_error=lambda msg: error(self, "保存失败", msg))
 
@@ -300,7 +304,7 @@ class BrowserView(QWidget):
         return ("OK", label, str(path))
 
     def _render_checks(self, results: List[Tuple[str, str, str]]) -> None:
-        lines = []
+        lines: List[str] = []
         fails = warns = 0
         for level, item, detail in results:
             if level == "FAIL":
@@ -310,12 +314,19 @@ class BrowserView(QWidget):
             lines.append(f"[{level:<4}] {item:<20} {detail}")
         lines.append("")
         if fails:
-            lines.append(f"结论：{fails} 项失败，{warns} 项警告 —— 需先修复失败项")
+            summary = f"环境检测：{fails} 项失败，{warns} 项警告"
+            lines.append(f"结论：{summary} —— 需先修复失败项")
+            level = "error"
         elif warns:
-            lines.append(f"结论：{warns} 项警告，可以运行")
+            summary = f"环境检测：{warns} 项警告，可以运行"
+            lines.append(f"结论：{summary}")
+            level = "warn"
         else:
+            summary = "环境检测：全部通过"
             lines.append("结论：全部通过")
+            level = "ok"
         self.check_output.setPlainText("\n".join(lines))
+        notify(self, summary, level)
 
     def _on_close_all(self) -> None:
         if not confirm(
@@ -326,8 +337,16 @@ class BrowserView(QWidget):
             danger=True,
         ):
             return
+        def done(result):
+            self.refresh()
+            stopped = (result or {}).get("stopped") or []
+            if stopped:
+                notify(self, f"已结束执行进程（PID {', '.join(map(str, stopped))}）")
+            else:
+                notify(self, "没有正在运行的执行进程", "warn")
+
         run_async(
             self.ctx.wpm.stop,
-            on_result=lambda _: self.refresh(),
+            on_result=done,
             on_error=lambda msg: error(self, "操作失败", msg),
         )
