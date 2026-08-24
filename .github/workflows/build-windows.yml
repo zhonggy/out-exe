@@ -108,7 +108,17 @@ jobs:
 
       - name: Prepare Chromium kernels
         if: ${{ !inputs.skip_kernels }}
-        run: python scripts/prepare_chromium.py --skip-fingerprint
+        shell: pwsh
+        run: |
+          # 指纹内核由上一步下载（或缓存命中）；这里只整理 patchright 内核。
+          # 缓存命中时下载步骤被跳过，必须确认目录真的在 —— 缓存 key 变更或
+          # 缓存被逐出时静默少一个内核，最终会发出一个没有退路的安装包。
+          $fp = "build\Chromium\fingerprint\chrome.exe"
+          if (-not (Test-Path $fp)) {
+            throw "fingerprint kernel missing at $fp (cache hit but content gone?)"
+          }
+          Write-Host "fingerprint kernel present: $fp"
+          python scripts/prepare_chromium.py --skip-fingerprint
 
       - name: Report kernel sizes
         if: ${{ !inputs.skip_kernels }}
@@ -119,7 +129,15 @@ jobs:
         run: pyinstaller --noconfirm --clean build.spec
 
       - name: Assemble dist
-        run: python scripts/assemble_dist.py --force
+        shell: pwsh
+        run: |
+          # 默认要求两个内核都在（选双内核就是为了有退路）。
+          # skip_kernels 是纯链路验证模式，产物本就不可用，放宽校验。
+          if ("${{ inputs.skip_kernels }}" -eq "true") {
+            python scripts/assemble_dist.py --force --allow-single-kernel
+          } else {
+            python scripts/assemble_dist.py --force
+          }
 
       - name: Verify frozen executable
         shell: pwsh

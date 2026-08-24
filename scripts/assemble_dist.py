@@ -101,8 +101,13 @@ def copy_docs() -> None:
     log(f"[copy] {readme.name}")
 
 
-def verify() -> bool:
-    """校验产物完整性。缺任何一项打包出来都是坏的。"""
+def verify(require_both_kernels: bool = True) -> bool:
+    """校验产物完整性。缺任何一项打包出来都是坏的。
+
+    ``require_both_kernels``：默认两个内核都必须在。只 WARN 不行 ——
+    当初选“两个都带”就是为了指纹内核失效时能一键切备用，
+    静默少一个等于发了个没有退路的包，而体积差异大到用户发现不了。
+    """
     log("\n=== 产物校验 ===")
     ok = True
 
@@ -131,14 +136,22 @@ def verify() -> bool:
     fingerprint = DIST_APP / "Chromium" / "fingerprint" / "chrome.exe"
     patchright_exes = list((DIST_APP / "Chromium" / "patchright").rglob("chrome.exe")) \
         if (DIST_APP / "Chromium" / "patchright").is_dir() else []
+
+    level = "FAIL" if require_both_kernels else "WARN"
     if fingerprint.is_file():
         log(f"[OK]   指纹内核      {human(dir_size(fingerprint.parent))}")
     else:
-        log("[WARN] 指纹内核缺失  指纹伪装不可用")
+        log(f"[{level}] 指纹内核缺失  指纹伪装不可用")
+        if require_both_kernels:
+            ok = False
+
     if patchright_exes:
         log(f"[OK]   备用内核      {patchright_exes[0].relative_to(DIST_APP)}")
     else:
-        log("[WARN] 备用内核缺失  无法在内核故障时切换")
+        log(f"[{level}] 备用内核缺失  内核故障时无法切换")
+        if require_both_kernels:
+            ok = False
+
     if not fingerprint.is_file() and not patchright_exes:
         log("[FAIL] 两个内核都缺失 —— 程序无法工作")
         ok = False
@@ -168,6 +181,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--verify", action="store_true", help="只校验，不拷贝")
     parser.add_argument("--force", action="store_true", help="覆盖已存在的 Chromium")
+    parser.add_argument(
+        "--allow-single-kernel",
+        action="store_true",
+        help="允许只带一个内核（默认两个都必须在）",
+    )
     args = parser.parse_args()
 
     if not DIST_APP.is_dir():
@@ -181,7 +199,7 @@ def main() -> int:
             return 1
         copy_docs()
 
-    return 0 if verify() else 1
+    return 0 if verify(require_both_kernels=not args.allow_single_kernel) else 1
 
 
 if __name__ == "__main__":
