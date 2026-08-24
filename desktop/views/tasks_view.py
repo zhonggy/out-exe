@@ -31,7 +31,14 @@ from PySide6.QtWidgets import (
 from database import AccountStatus, TaskStatus
 
 from ..bridge.tasks import run_async
-from ..theme import COLOR_FAIL, COLOR_OK, COLOR_RUNNING, TEXT_DIM, task_status_color
+from ..theme import (
+    COLOR_FAIL,
+    COLOR_OK,
+    COLOR_RUNNING,
+    TEXT_DIM,
+    apply_row_height,
+    task_status_color,
+)
 from .widgets import (
     KeyValueRow,
     button,
@@ -126,40 +133,80 @@ class TaskTableModel(QAbstractTableModel):
         return {}
 
 
+#: 单次派发的数量上限。
+#
+# 不是技术硬限制——派发本身能跑上万条（实测 440 条/秒，12000 条约 27 秒），
+# 数据库和队列都不会因此出问题（queue.restore 一次最多拉 10000 条进内存，
+# 但执行进程每 2 秒补拉一次，超出部分照样会被处理，只是分批）。
+#
+# 设这个上限是为了避免"点一下等半分钟"的体验，以及一次把上万账号锁成
+# PENDING 后想反悔只能手工重置。超过时对话框会提示分批。
+DISPATCH_SOFT_LIMIT = 5000
+
+
 class DispatchDialog(QDialog):
     """派发任务：从待处理账号中取 N 个，或指定账号列表。"""
 
-    def __init__(self, flows: List[str], default_limit: int, parent: Optional[QWidget] = None):
+    def __init__(
+        self,
+        flows: List[str],
+        pending: int,
+        parent: Optional[QWidget] = None,
+    ):
         super().__init__(parent)
         self.setWindowTitle("派发任务")
-        self.resize(460, 340)
+        self.resize(520, 420)
+        self._pending = max(0, int(pending))
         layout = QVBoxLayout(self)
+        layout.setSpacing(10)
 
         form = QFormLayout()
+        form.setSpacing(8)
+
         self.flow = QComboBox()
         for name in flows or ["login"]:
             self.flow.addItem(name)
+
         self.limit = QSpinBox()
-        self.limit.setRange(1, 100000)
-        self.limit.setValue(default_limit)
+        self.limit.setRange(1, max(1, DISPATCH_SOFT_LIMIT))
+        # 默认全部待处理账号：用户点派发通常就是想跑完手上的账号，
+        # 原来默认取「并发数 × 10」是个没有依据的魔法值
+        self.limit.setValue(max(1, min(self._pending or 1, DISPATCH_SOFT_LIMIT)))
+        self.limit.setToolTip(
+            f"从「未处理」账号中取多少个。\n"
+            f"当前待处理：{self._pending} 个\n"
+            f"单次上限：{DISPATCH_SOFT_LIMIT}（更多请分批派发）"
+        )
+
         self.priority = QSpinBox()
         self.priority.setRange(-100, 100)
         self.priority.setValue(0)
         self.priority.setToolTip("数值越大越先执行")
+
         form.addRow("流程", self.flow)
-        form.addRow("数量上限", self.limit)
+        form.addRow("数量", self.limit)
         form.addRow("优先级", self.priority)
         layout.addLayout(form)
+
+        self.summary = QLabel()
+        self.summary.setProperty("role", "hint")
+        self.summary.setWordWrap(True)
+        layout.addWidget(self.summary)
 
         layout.addWidget(
             hint_label(
                 "留空账号列表 = 自动从「未处理」账号中取上述数量。<br>"
-                "填写账号列表（每行一个）= 只派发这些账号，忽略数量上限。"
+                "填写账号列表（每行一个）= 只派发这些账号，忽略上面的数量。"
             )
         )
         self.accounts = QPlainTextEdit()
         self.accounts.setPlaceholderText("a@example.com\nb@example.com")
         layout.addWidget(self.accounts, 1)
+
+        # 摘要依赖 limit 与 accounts 两个控件，必须等它们都建好再接信号并首次刷新
+        self.limit.valueChanged.connect(self._update_summary)
+        self.accounts.textChanged.connect(self._update_summary)
+        self._update_summary()
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Ok).setText("派发")
@@ -168,14 +215,38 @@ class DispatchDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-    def values(self) -> Dict[str, Any]:
+    def _update_summary(self) -> None:
+        explicit = self._explicit_accounts()
+        if explicit:
+            count = len(explicit)
+            text = f"将派发指定的 {count} 个账号"
+            if count > DISPATCH_SOFT_LIMIT:
+                text += f"，超过单次上限 {DISPATCH_SOFT_LIMIT}，只取前 {DISPATCH_SOFT_LIMIT} 个"
+        else:
+            want = self.limit.value()
+            count = min(want, self._pending)
+            text = f"待处理 {self._pending} 个，本次派发 {count} 个"
+            if self._pending == 0:
+                text = "没有「未处理」账号 —— 先导入账号，或在账号页重置已处理的账号"
+            elif want > self._pending:
+                text += f"（不足 {want} 个）"
+            elif self._pending > want:
+                text += f"，剩余 {self._pending - want} 个可稍后再派发"
+        # 预估耗时：实测约 440 条/秒
+        if count > 800:
+            text += f"，预计耗时约 {max(1, round(count / 440))} 秒"
+        self.summary.setText(text)
+
+    def _explicit_accounts(self) -> List[str]:
         raw = self.accounts.toPlainText().strip()
-        accounts = [line.strip() for line in raw.splitlines() if line.strip()]
+        return [line.strip() for line in raw.splitlines() if line.strip()]
+
+    def values(self) -> Dict[str, Any]:
         return {
             "flow": self.flow.currentText(),
             "limit": self.limit.value(),
             "priority": self.priority.value(),
-            "accounts": accounts,
+            "accounts": self._explicit_accounts()[:DISPATCH_SOFT_LIMIT],
         }
 
 
@@ -237,7 +308,7 @@ class TasksView(QWidget):
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(28)
+        apply_row_height(self.table)
         self.table.doubleClicked.connect(self._on_row_activated)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeToContents)
@@ -256,11 +327,12 @@ class TasksView(QWidget):
         self.workers_spin = QSpinBox()
         self.workers_spin.setRange(1, 16)
         self.workers_spin.setValue(
-            int(self.ctx.cfg.get("system.max_workers", 3) or 3)
+            int(self.ctx.cfg.get("system.max_workers", 1) or 1)
         )
         self.workers_spin.setToolTip(
-            "并发 Worker 数。每个 Worker 独占一个浏览器实例，"
-            "数量越大内存和 CPU 占用越高。"
+            "同时并行处理的账号数。每个线程独占一个浏览器实例。\n\n"
+            "默认 1（逐个处理）。调高能提速，但内存与 CPU 占用同比上升，"
+            "且同时打开多个浏览器更容易被目标站点识别为异常流量。"
         )
 
         self.btn_start = button("开始执行", "primary")
@@ -273,7 +345,7 @@ class TasksView(QWidget):
         outer.addWidget(self.state_label)
         outer.addWidget(
             toolbar(
-                QLabel("Worker 数"),
+                QLabel("并发线程"),
                 self.workers_spin,
                 self.btn_start,
                 self.btn_stop,
@@ -423,7 +495,7 @@ class TasksView(QWidget):
             notify(
                 self,
                 f"执行进程已启动（PID {result['pid']}，"
-                f"{result.get('workers', '?')} 个 Worker）",
+                f"{result.get('workers', '?')} 个并发线程）",
             )
 
         self.refresh()
@@ -439,37 +511,68 @@ class TasksView(QWidget):
         from flow import list_flows
 
         flows = sorted(list_flows())
-        dialog = DispatchDialog(flows, int(self.ctx.cfg.get("system.max_workers", 3) or 3) * 10, self)
+        stats = self.ctx.am.stats()
+        pending = int(stats["by_status"].get(AccountStatus.NEW.value, 0))
+
+        dialog = DispatchDialog(flows, pending, self)
         if not dialog.exec():
             return
         values = dialog.values()
 
-        def work():
+        if not values["accounts"] and pending == 0:
+            info(
+                self,
+                "派发任务",
+                "没有「未处理」账号。\n\n"
+                "先在账号页导入账号，或选中已处理的账号点「重置状态」后重跑。",
+            )
+            return
+
+        self.btn_dispatch.setEnabled(False)
+        self.btn_dispatch.setText("派发中…")
+
+        def work(progress=None):
             from task import get_task_manager
 
             tm = get_task_manager(self.ctx.cfg, logger=self.ctx.log)
-            if values["accounts"]:
-                tasks = [
+            explicit = values["accounts"]
+            if explicit:
+                total = len(explicit)
+                created = 0
+                for index, account in enumerate(explicit, 1):
                     tm.submit(
                         account,
                         task_type=values["flow"],
                         priority=values["priority"],
                     )
-                    for account in values["accounts"]
-                ]
-            else:
-                tasks = tm.submit_batch(
-                    task_type=values["flow"],
-                    limit=values["limit"],
-                    priority=values["priority"],
-                )
+                    created += 1
+                    # 逐条派发，顺便回报进度：上千条时用户需要看到在动
+                    if progress is not None and (index % 50 == 0 or index == total):
+                        progress(index, total, f"已创建 {index}/{total}")
+                return created
+
+            tasks = tm.submit_batch(
+                task_type=values["flow"],
+                limit=values["limit"],
+                priority=values["priority"],
+            )
             return len(tasks)
 
         run_async(
             work,
             on_result=self._on_dispatched,
+            on_progress=self._on_dispatch_progress,
             on_error=lambda msg: error(self, "派发失败", msg),
+            on_done=self._restore_dispatch_button,
         )
+
+    def _on_dispatch_progress(self, current: int, total: int, text: str) -> None:
+        self.btn_dispatch.setText(f"派发中 {current}/{total}")
+        notify(self, text or f"派发中 {current}/{total}")
+
+    def _restore_dispatch_button(self) -> None:
+        self.btn_dispatch.setEnabled(True)
+        self.btn_dispatch.setText("派发任务")
 
     def _on_dispatched(self, count: int) -> None:
         if not count:

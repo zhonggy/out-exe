@@ -53,7 +53,7 @@ class TaskManager:
         with self._lock:
             if self.workers:
                 return len(self.workers)
-            count = int(workers or self.cfg.get("system.max_workers", 3))
+            count = int(workers or self.cfg.get("system.max_workers", 1))
             count = max(1, count)
             # 上次 stop() 已把队列关闭：重建队列，否则新 Worker 会立即退出
             if self.queue.closed:
@@ -80,7 +80,7 @@ class TaskManager:
                 )
                 worker.start()
                 self.workers.append(worker)
-            self.log.ok("manager_start", f"已启动 {count} 个 Worker")
+            self.log.ok("manager_start", f"已启动 {count} 个并发线程")
             return count
 
     def stop(self, wait: bool = True, timeout: float = 30.0) -> None:

@@ -153,7 +153,7 @@ _DEFAULTS: Dict[str, Any] = {
         "checkpoint_enabled": True,
     },
     "system": {
-        "max_workers": 3,
+        "max_workers": 1,
         "task_retry": 1,
         "accounts_file": "accounts.txt",
         "account_separator": "----",

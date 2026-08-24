@@ -35,7 +35,7 @@ from account import describe
 from database import AccountStatus
 
 from ..bridge.tasks import run_async
-from ..theme import account_status_color
+from ..theme import account_status_color, apply_row_height
 from .widgets import (
     button,
     confirm,
@@ -274,7 +274,8 @@ class AccountsView(QWidget):
         self.table.setAlternatingRowColors(True)
         self.table.setSortingEnabled(False)
         self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(28)
+        # 行高按运行时字体实测，不写死——中文字体 + 高 DPI 缩放下 28px 会裁字
+        apply_row_height(self.table)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Stretch)
         for col in range(1, len(AccountTableModel.COLUMNS)):

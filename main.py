@@ -187,7 +187,7 @@ def cmd_run(args) -> int:
             print("没有可执行的账号。先执行 python main.py import")
             return 1
 
-    workers = args.workers or int(cfg.get("system.max_workers", 3))
+    workers = args.workers or int(cfg.get("system.max_workers", 1))
     tm.start(workers=workers, restore=not args.no_restore)
 
     if args.account:
@@ -200,7 +200,7 @@ def cmd_run(args) -> int:
         tm.stop()
         return 0
 
-    print(f"已派发 {len(tasks)} 个任务，Worker={workers}。Ctrl+C 可中断（任务会保留断点）")
+    print(f"已派发 {len(tasks)} 个任务，并发线程={workers}。Ctrl+C 可中断（任务会保留断点）")
     try:
         while True:
             idle = tm.wait_idle(timeout=5)
@@ -245,7 +245,7 @@ def cmd_work(args) -> int:
             print("没有可执行的账号，先导入账号再启动")
             return 1
 
-    workers = args.workers or int(cfg.get("system.max_workers", 3))
+    workers = args.workers or int(cfg.get("system.max_workers", 1))
     tm.start(workers=workers, restore=not args.no_restore)
 
     # 先写 PID 文件再发 hello：GUI 收到 hello 就会认为执行进程就绪，
@@ -256,7 +256,7 @@ def cmd_work(args) -> int:
     pid_file.write_text(str(os.getpid()), encoding="utf-8")
 
     _ipc_send({"kind": "hello", "ts": time.time(), "pid": os.getpid(), "workers": workers})
-    print(f"[WORKER] 已启动 {workers} 个 Worker，PID={os.getpid()}，等待任务...")
+    print(f"[WORKER] 已启动 {workers} 个并发线程，PID={os.getpid()}，等待任务...")
 
     try:
         # 常驻：周期性从数据库补拉新任务（GUI 随时下单都能被接住）+ 统计落盘

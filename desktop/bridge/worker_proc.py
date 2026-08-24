@@ -45,8 +45,8 @@ _WORKERS_MIN = 1
 _WORKERS_MAX = 16
 
 
-def clamp_workers(value: Any, default: int = 3) -> int:
-    """Worker 数收敛到 [1, 16]。上限防止用户手滑输 999 把机器打死。"""
+def clamp_workers(value: Any, default: int = 1) -> int:
+    """并发线程数收敛到 [1, 16]。上限防止用户手滑输 999 把机器打死。"""
     try:
         n = int(value)
     except (TypeError, ValueError):
@@ -154,7 +154,7 @@ class WorkerProcessManager:
     # ---------- 启停 ----------
     def start(self, workers: Optional[int] = None) -> Dict[str, Any]:
         n = clamp_workers(
-            workers if workers is not None else self.cfg.get("system.max_workers", 3)
+            workers if workers is not None else self.cfg.get("system.max_workers", 1)
         )
         if self.alive():
             self.requested_workers = n

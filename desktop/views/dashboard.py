@@ -94,11 +94,11 @@ class DashboardView(QWidget):
         env_box = QGroupBox("环境")
         env_layout = QVBoxLayout(env_box)
         self.env_rows: Dict[str, KeyValueRow] = {
-            "kernel": KeyValueRow("浏览器内核"),
+            "kernel": KeyValueRow("浏览器内核", elide=True),
             "proxy": KeyValueRow("代理"),
             "profiles": KeyValueRow("Profile 数量"),
-            "db": KeyValueRow("数据库"),
-            "data_dir": KeyValueRow("数据目录"),
+            "db": KeyValueRow("数据库", elide=True),
+            "data_dir": KeyValueRow("数据目录", elide=True),
         }
         for row in self.env_rows.values():
             env_layout.addWidget(row)

@@ -230,7 +230,9 @@ set OA_SYSTEM__MAX_WORKERS=5
 - `profile.reuse` true 时同账号固定复用一个 profile，保留登录态减少验证
 - `proxy.mode` `single` 单端口 / `pool` 端口池（`port_start`~`port_end`）
 - `flow.captcha_strategy` 0 全自动 / 1 半自动
-- `system.max_workers` 并发数，每个 Worker 独立浏览器实例
+- `system.max_workers` 并发线程数（默认 1），每个线程独占一个浏览器实例。
+  调高能提速，但内存与 CPU 占用同比上升，且同时打开多个浏览器更容易被
+  目标站点识别为异常流量。上限 16
 
 ## 安全说明
 
@@ -272,6 +274,7 @@ SQLite 全部表 CRUD、账号解析与导入、任务优先级队列与恢复�
 python tests/smoke_feedback.py      # 每个操作按钮都必须有可见反馈
 python tests/smoke_proxy_ui.py      # 代理页保存/测试的完整交互
 python tests/smoke_list_refresh.py  # 数据变更后列表正确刷新
+python tests/smoke_ui_metrics.py    # 行高/字体度量、高 DPI 缩放
 ```
 
 冒烟测试覆盖：
@@ -289,11 +292,27 @@ python tests/smoke_list_refresh.py  # 数据变更后列表正确刷新
 - **smoke_list_refresh** — 数据变更后列表必须跟着变：过时响应被丢弃、
   导入时残留的筛选/搜索/翻页被重置、越界页自动回第一页。
   同样是防回归测试，回退修复后它报出 6 项失败
+- **smoke_ui_metrics** — 行高与 Label 高度不小于字体实测需求，
+  含 100%/125%/150%/175%/200% DPI 缩放；并发线程默认值与派发上限。
+  把行高改回写死的 28px，它会在 150% 及以上报失败
 
-CI 上这六项都是打包的前置门禁，任一失败不产出安装包。
+CI 上这七项都是打包的前置门禁，任一失败不产出安装包。
 
 端到端也已实测：headless 双 Worker 并发跑 4 个任务全部 COMPLETED，
 断点按 `BROWSER_STARTED → LOGIN_PAGE → COMPLETED` 落库，浏览器与 profile 正常回收。
+
+## 派发数量
+
+单次派发上限 **5000**，是体验上的软限制而非技术瓶颈：
+
+- 派发速度实测约 440 条/秒，12000 条约 27 秒。数据库与队列都能承受
+- `queue.restore()` 一次最多拉 10000 条进内存队列，但执行进程每 2 秒
+  补拉一次，超出部分照样会被处理 —— 不丢任务，只是分批进入
+- 设上限是为了避免"点一下等半分钟"，以及一次把上万账号锁成 PENDING
+  后想反悔只能手工重置
+
+派发对话框会显示待处理数量、本次派发数量与预估耗时；超过 800 条时
+按钮上有实时进度。需要更多请分批派发。
 
 ## 打包
 

@@ -52,7 +52,7 @@ flow:
   checkpoint_enabled: true      # 保存流程节点，支持中断恢复
 
 system:
-  max_workers: 3                # 并发 Worker 数
+  max_workers: 1                # 并发线程数（每个线程独占一个浏览器实例）
   task_retry: 1                 # 单任务失败重试次数
   accounts_file: "accounts.txt"
   account_separator: "----"

@@ -71,9 +71,9 @@ class BrowserView(QWidget):
         )
 
         self.rows: Dict[str, KeyValueRow] = {
-            "active": KeyValueRow("当前生效"),
-            "fingerprint": KeyValueRow("指纹内核"),
-            "patchright": KeyValueRow("备用内核"),
+            "active": KeyValueRow("当前生效", elide=True),
+            "fingerprint": KeyValueRow("指纹内核", elide=True),
+            "patchright": KeyValueRow("备用内核", elide=True),
             "fp_enabled": KeyValueRow("指纹伪装"),
             "headless": KeyValueRow("无头模式"),
             "instances": KeyValueRow("浏览器实例"),
@@ -155,9 +155,9 @@ class BrowserView(QWidget):
         self.rows["headless"].set_value(
             "是" if self.ctx.cfg.get("browser.headless", False) else "否"
         )
-        max_workers = int(self.ctx.cfg.get("system.max_workers", 3) or 3)
+        max_workers = int(self.ctx.cfg.get("system.max_workers", 1) or 1)
         self.rows["instances"].set_value(
-            f"{snapshot.get('browsers', 0)} / 上限 {max_workers}（= Worker 数）"
+            f"{snapshot.get('browsers', 0)} / 上限 {max_workers}（= 并发线程数）"
         )
 
     # ---------- 操作 ----------

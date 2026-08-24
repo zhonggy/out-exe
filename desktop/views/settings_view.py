@@ -2,7 +2,7 @@
 
 只暴露对使用有实际影响的配置项，映射到现有 config.yaml 的键。
 不新造配置——原规划文档里的"浏览器并发数"在代码中不存在，
-浏览器实例数就等于 ``system.max_workers``。
+浏览器实例数就等于并发线程数（``system.max_workers``）。
 
 配置生效时机：执行进程启动时读一次配置。所以改完配置若执行进程在跑，
 必须明确提示"重启后生效"，不能让用户以为立即生效了。
@@ -96,8 +96,10 @@ class SettingsView(QWidget):
         self.max_workers = QSpinBox()
         self.max_workers.setRange(1, 16)
         self.max_workers.setToolTip(
-            "并发 Worker 数。每个 Worker 独占一个浏览器实例，"
-            "同时也是浏览器实例上限。"
+            "同时并行处理的账号数。每个线程独占一个浏览器实例，\n"
+            "也就是浏览器实例上限。\n\n"
+            "默认 1（逐个处理）。调高能提速，但内存与 CPU 占用同比上升，\n"
+            "且同时打开多个浏览器更容易被目标站点识别为异常流量。"
         )
         self.task_retry = QSpinBox()
         self.task_retry.setRange(0, 10)
@@ -107,7 +109,7 @@ class SettingsView(QWidget):
 
         layout.addWidget(
             toolbar(
-                QLabel("Worker 数"),
+                QLabel("并发线程"),
                 self.max_workers,
                 QLabel("失败重试"),
                 self.task_retry,
@@ -235,13 +237,13 @@ class SettingsView(QWidget):
         box = QGroupBox("路径")
         layout = QVBoxLayout(box)
         self.rows: Dict[str, KeyValueRow] = {
-            "app": KeyValueRow("程序目录"),
-            "data": KeyValueRow("数据目录"),
-            "config": KeyValueRow("配置文件"),
-            "db": KeyValueRow("数据库"),
-            "logs": KeyValueRow("日志目录"),
-            "profiles": KeyValueRow("Profile 目录"),
-            "accounts": KeyValueRow("账号文件"),
+            "app": KeyValueRow("程序目录", elide=True),
+            "data": KeyValueRow("数据目录", elide=True),
+            "config": KeyValueRow("配置文件", elide=True),
+            "db": KeyValueRow("数据库", elide=True),
+            "logs": KeyValueRow("日志目录", elide=True),
+            "profiles": KeyValueRow("Profile 目录", elide=True),
+            "accounts": KeyValueRow("账号文件", elide=True),
         }
         for row in self.rows.values():
             layout.addWidget(row)
@@ -261,7 +263,7 @@ class SettingsView(QWidget):
     def refresh(self) -> None:
         cfg = self.ctx.cfg
 
-        self.max_workers.setValue(int(cfg.get("system.max_workers", 3) or 3))
+        self.max_workers.setValue(int(cfg.get("system.max_workers", 1) or 1))
         self.task_retry.setValue(int(cfg.get("system.task_retry", 1) or 0))
         self.account_separator.setText(str(cfg.get("system.account_separator", "----")))
 
@@ -374,7 +376,7 @@ class SettingsView(QWidget):
                 self,
                 "已保存",
                 f"配置已写入：\n{path}\n\n"
-                "执行进程启动时读取配置，Worker 数、浏览器与流程相关设置"
+                "执行进程启动时读取配置，并发线程数、浏览器与流程相关设置"
                 "需重启执行进程才生效。",
             )
             notify(self, "设置已保存（需重启执行进程生效）", "warn")

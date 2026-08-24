@@ -92,6 +92,12 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           OA_DATA_DIR: ${{ runner.temp }}\oa-list-data
 
+      - name: UI metrics smoke test
+        run: python tests/smoke_ui_metrics.py
+        env:
+          QT_QPA_PLATFORM: offscreen
+          OA_DATA_DIR: ${{ runner.temp }}\oa-metrics-data
+
       # ---------- Chromium 内核（体积大，走缓存） ----------
       - name: Cache patchright Chromium
         if: ${{ !inputs.skip_kernels }}

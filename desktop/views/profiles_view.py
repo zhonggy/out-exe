@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 from database import ProfileStatus
 
 from ..bridge.tasks import run_async
-from ..theme import COLOR_IDLE, COLOR_RUNNING, COLOR_WARN, TEXT_DIM
+from ..theme import COLOR_IDLE, COLOR_RUNNING, COLOR_WARN, TEXT_DIM, apply_row_height
 from .widgets import (
     button,
     confirm,
@@ -161,7 +161,7 @@ class ProfilesView(QWidget):
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(28)
+        apply_row_height(self.table)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeToContents)
         header.setSectionResizeMode(6, QHeaderView.Stretch)

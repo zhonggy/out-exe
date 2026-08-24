@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..bridge.tasks import run_async
-from ..theme import COLOR_FAIL, COLOR_OK, COLOR_WARN, TEXT_DIM
+from ..theme import COLOR_FAIL, COLOR_OK, COLOR_WARN, TEXT_DIM, apply_row_height
 from .widgets import (
     KeyValueRow,
     button,
@@ -234,7 +234,7 @@ class ProxyView(QWidget):
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(26)
+        apply_row_height(self.table, padding=10)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Stretch)
         for col in range(1, len(ProxyTableModel.COLUMNS)):
