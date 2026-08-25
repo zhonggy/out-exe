@@ -30,7 +30,15 @@ from PySide6.QtWidgets import (
 )
 
 from ..bridge.tasks import run_async
-from ..theme import COLOR_FAIL, COLOR_OK, COLOR_WARN, TEXT_DIM, apply_row_height
+from ..theme import (
+    COLOR_FAIL,
+    COLOR_OK,
+    COLOR_WARN,
+    TEXT_DIM,
+    apply_row_height,
+    fit_all_checkboxes,
+    fit_input,
+)
 from .widgets import (
     KeyValueRow,
     button,
@@ -39,6 +47,7 @@ from .widgets import (
     hint_label,
     info,
     notify,
+    spinbox,
     title_label,
     toolbar,
 )
@@ -120,6 +129,8 @@ class ProxyView(QWidget):
         layout.addWidget(self._build_resin_box())
         layout.addWidget(self._build_tracker_box(), 1)
 
+        fit_all_checkboxes(self)
+
     # ---------- 本地代理池 ----------
     def _build_local_box(self) -> QWidget:
         box = QGroupBox("本地代理池（proxy）")
@@ -134,13 +145,10 @@ class ProxyView(QWidget):
         self.local_type.addItem("http", "http")
         self.local_type.addItem("socks5", "socks5")
         self.local_host = QLineEdit()
-        self.local_host.setMaximumWidth(160)
-        self.local_single_port = QSpinBox()
-        self.local_single_port.setRange(1, 65535)
-        self.local_port_start = QSpinBox()
-        self.local_port_start.setRange(1, 65535)
-        self.local_port_end = QSpinBox()
-        self.local_port_end.setRange(1, 65535)
+        fit_input(self.local_host, "255.255.255.255", extra=32)
+        self.local_single_port = spinbox(1, 65535)
+        self.local_port_start = spinbox(1, 65535)
+        self.local_port_end = spinbox(1, 65535)
 
         layout.addWidget(
             toolbar(
@@ -186,8 +194,15 @@ class ProxyView(QWidget):
         self.resin_enabled.stateChanged.connect(self._update_active_label)
         self.resin_url = QLineEdit()
         self.resin_url.setPlaceholderText("http://127.0.0.1:2260/your-token")
+        # 地址较长，单独给足宽度；它占满整行，上限放宽
+        fit_input(
+            self.resin_url,
+            "http://127.0.0.1:2260/your-token",
+            extra=32,
+        )
+        self.resin_url.setMaximumWidth(16777215)
         self.resin_platform = QLineEdit()
-        self.resin_platform.setMaximumWidth(140)
+        fit_input(self.resin_platform, "DefaultPlatform", extra=32)
         self.resin_identity = QComboBox()
         self.resin_identity.addItem("邮箱前缀 email_prefix", "email_prefix")
         self.resin_identity.addItem("完整邮箱 email", "email")

@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..theme import TEXT_DIM, log_level_color
+from ..theme import TEXT_DIM, fit_checkbox, fit_input, log_level_color
 from .widgets import button, human_time, title_label, toolbar
 
 _LEVELS = ["全部", "DEBUG", "INFO", "OK", "WARN", "ERROR"]
@@ -74,11 +74,12 @@ class LogsView(QWidget):
         self.keyword = QLineEdit()
         self.keyword.setPlaceholderText("过滤关键字")
         self.keyword.setClearButtonEnabled(True)
-        self.keyword.setMaximumWidth(220)
+        fit_input(self.keyword, "过滤关键字xxxxxxxx", extra=48)
         self.keyword.textChanged.connect(self._rerender)
 
         self.autoscroll = QCheckBox("自动滚动")
         self.autoscroll.setChecked(True)
+        fit_checkbox(self.autoscroll)
 
         self.btn_clear = button("清空显示")
         self.btn_open_dir = button("打开日志目录")

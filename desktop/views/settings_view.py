@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..bridge.tasks import run_async
-from ..theme import COLOR_WARN, TEXT_DIM
+from ..theme import COLOR_WARN, TEXT_DIM, fit_all_checkboxes, fit_input
 from .widgets import (
     KeyValueRow,
     button,
@@ -37,6 +37,7 @@ from .widgets import (
     hint_label,
     info,
     notify,
+    spinbox,
     title_label,
     toolbar,
 )
@@ -88,24 +89,27 @@ class SettingsView(QWidget):
         self.hint.setStyleSheet(f"color: {COLOR_WARN};")
         outer.addWidget(toolbar(self.btn_save, self.btn_reload, self.hint, stretch_at=2))
 
+        # 本页有十来个勾选框，统一按文字宽度设最小宽度
+        fit_all_checkboxes(self)
+
     # ---------- 分组 ----------
     def _build_run_box(self) -> QWidget:
         box = QGroupBox("运行")
         layout = QVBoxLayout(box)
 
-        self.max_workers = QSpinBox()
-        self.max_workers.setRange(1, 16)
-        self.max_workers.setToolTip(
-            "同时并行处理的账号数。每个线程独占一个浏览器实例，\n"
-            "也就是浏览器实例上限。\n\n"
-            "默认 1（逐个处理）。调高能提速，但内存与 CPU 占用同比上升，\n"
-            "且同时打开多个浏览器更容易被目标站点识别为异常流量。"
+        self.max_workers = spinbox(
+            1,
+            16,
+            tooltip=(
+                "同时并行处理的账号数。每个线程独占一个浏览器实例，\n"
+                "也就是浏览器实例上限。\n\n"
+                "默认 1（逐个处理）。调高能提速，但内存与 CPU 占用同比上升，\n"
+                "且同时打开多个浏览器更容易被目标站点识别为异常流量。"
+            ),
         )
-        self.task_retry = QSpinBox()
-        self.task_retry.setRange(0, 10)
-        self.task_retry.setToolTip("单任务失败后的重试次数")
+        self.task_retry = spinbox(0, 10, tooltip="单任务失败后的重试次数")
         self.account_separator = QLineEdit()
-        self.account_separator.setMaximumWidth(100)
+        fit_input(self.account_separator, "--------", extra=32)
 
         layout.addWidget(
             toolbar(
@@ -145,14 +149,8 @@ class SettingsView(QWidget):
             )
         )
 
-        self.timeout = QSpinBox()
-        self.timeout.setRange(1000, 600000)
-        self.timeout.setSingleStep(5000)
-        self.timeout.setSuffix(" ms")
-        self.nav_timeout = QSpinBox()
-        self.nav_timeout.setRange(1000, 600000)
-        self.nav_timeout.setSingleStep(5000)
-        self.nav_timeout.setSuffix(" ms")
+        self.timeout = spinbox(1000, 600000, suffix=" ms", step=5000)
+        self.nav_timeout = spinbox(1000, 600000, suffix=" ms", step=5000)
         layout.addWidget(
             toolbar(
                 QLabel("操作超时"),
@@ -174,11 +172,8 @@ class SettingsView(QWidget):
         self.captcha_strategy = QComboBox()
         for text, value in _CAPTCHA_STRATEGIES:
             self.captcha_strategy.addItem(text, value)
-        self.max_captcha_retries = QSpinBox()
-        self.max_captcha_retries.setRange(0, 20)
-        self.wait_verify_timeout = QSpinBox()
-        self.wait_verify_timeout.setRange(10, 3600)
-        self.wait_verify_timeout.setSuffix(" 秒")
+        self.max_captcha_retries = spinbox(0, 20)
+        self.wait_verify_timeout = spinbox(10, 3600, suffix=" 秒")
         self.captcha_screenshot = QCheckBox("验证码失败截图")
         self.checkpoint_enabled = QCheckBox("保存流程断点")
         self.checkpoint_enabled.setToolTip("中断后可从断点恢复，建议保持开启")
@@ -216,10 +211,9 @@ class SettingsView(QWidget):
         self.log_level = QComboBox()
         self.log_level.addItems(_LOG_LEVELS)
         self.log_to_file = QCheckBox("写入文件")
-        self.log_view_limit = QSpinBox()
-        self.log_view_limit.setRange(100, 5000)
-        self.log_view_limit.setSingleStep(100)
-        self.log_view_limit.setToolTip("日志页最多显示的行数")
+        self.log_view_limit = spinbox(
+            100, 5000, step=100, tooltip="日志页最多显示的行数"
+        )
 
         layout.addWidget(
             toolbar(

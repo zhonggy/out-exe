@@ -35,7 +35,7 @@ from account import describe
 from database import AccountStatus
 
 from ..bridge.tasks import run_async
-from ..theme import account_status_color, apply_row_height
+from ..theme import account_status_color, apply_row_height, fit_input
 from .widgets import (
     button,
     confirm,
@@ -227,7 +227,8 @@ class AccountsView(QWidget):
         self.search = QLineEdit()
         self.search.setPlaceholderText("搜索账号（回车）")
         self.search.setClearButtonEnabled(True)
-        self.search.setMaximumWidth(260)
+        # 宽度按占位符文字算，不写死像素 —— 换字体/放大字号后固定值会装不下
+        fit_input(self.search, "搜索账号（回车）xxxxxx", extra=48)
         self.search.returnPressed.connect(self._on_search)
 
         self.status_filter = QComboBox()

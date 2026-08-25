@@ -99,12 +99,14 @@ OutlookAutomation/
 │   ├── main_window.py       主窗口 + 左侧导航 + 统一刷新定时器
 │   ├── context.py           AppContext，各页共享的运行时单例
 │   ├── single_instance.py   单实例锁（防双开抢同一个数据库）
-│   ├── theme.py             深色主题 + 状态色
+│   ├── theme.py             深色主题 + 字体度量（不写死像素）
 │   ├── bridge/
 │   │   ├── worker_proc.py   执行进程生命周期 + argv 构造
 │   │   ├── ipc.py           命名管道 IPC（行分隔 JSON）
 │   │   └── tasks.py         QThreadPool 后台任务
 │   └── views/               8 个页面（仪表盘/账号/任务/日志/浏览器/Profile/代理/设置）
+│       ├── widgets.py       通用组件 + 按字体计算尺寸的构造器
+│       └── flow_layout.py   自动换行的工具栏布局
 ├── config/
 │   ├── config.yaml          全部可调参数
 │   └── loader.py            YAML 加载 + 点号访问 + 环境变量覆盖
@@ -275,6 +277,7 @@ python tests/smoke_feedback.py      # 每个操作按钮都必须有可见反馈
 python tests/smoke_proxy_ui.py      # 代理页保存/测试的完整交互
 python tests/smoke_list_refresh.py  # 数据变更后列表正确刷新
 python tests/smoke_ui_metrics.py    # 行高/字体度量、高 DPI 缩放
+python tests/smoke_ui_geometry.py   # 逐控件几何：文字是否放得下
 ```
 
 冒烟测试覆盖：
@@ -295,11 +298,32 @@ python tests/smoke_ui_metrics.py    # 行高/字体度量、高 DPI 缩放
 - **smoke_ui_metrics** — 行高与 Label 高度不小于字体实测需求，
   含 100%/125%/150%/175%/200% DPI 缩放；并发线程默认值与派发上限。
   把行高改回写死的 28px，它会在 150% 及以上报失败
+- **smoke_ui_geometry** — 逐控件对比"实际可用尺寸"与"文字需要的尺寸"，
+  覆盖 3 档缩放 × 2 种窗口宽度。关掉 show 后的重算，它在 125% 报 10 处、
+  150% 报 16 处
 
-CI 上这七项都是打包的前置门禁，任一失败不产出安装包。
+CI 上这八项都是打包的前置门禁，任一失败不产出安装包。
 
 端到端也已实测：headless 双 Worker 并发跑 4 个任务全部 COMPLETED，
 断点按 `BROWSER_STARTED → LOGIN_PAGE → COMPLETED` 落库，浏览器与 profile 正常回收。
+
+## 界面适配
+
+中文 + 高 DPI 是这个界面最容易出问题的组合，三条约束写在代码里：
+
+**不写死像素尺寸。** 中文字体实际占高约为像素字号的 1.35 倍（西文约 1.15），
+而 Qt 会按系统 DPI 缩放样式表里的 px 值（125% → 18px，150% → 21px）。
+行高、勾选框宽度、输入框宽度都由 `theme.py` 的 `text_height()` /
+`fit_input()` / `fit_checkbox()` / `fit_spinbox()` 按运行时字体算。
+
+**show 之后要重算一次。** 控件构造时还没被样式表 polish，`widget.font()`
+返回的是 9pt 默认字体，比样式表的 14px 窄 —— 构造期只能估下限。
+`MainWindow.showEvent()` 调 `refit_widget_tree()` 用最终字体重算。
+
+**工具栏自动换行。** `QHBoxLayout` 放不下时会压缩可伸缩控件而不换行：
+账号页 9 个控件在 1030px 宽下需要 1026px，搜索框被压到 74px，占位符
+完全看不见。`views/flow_layout.py` 的 `FlowLayout` 改为折行，
+每个控件都拿到完整宽度。
 
 ## 派发数量
 

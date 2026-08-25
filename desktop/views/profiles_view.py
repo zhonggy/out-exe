@@ -28,7 +28,15 @@ from PySide6.QtWidgets import (
 from database import ProfileStatus
 
 from ..bridge.tasks import run_async
-from ..theme import COLOR_IDLE, COLOR_RUNNING, COLOR_WARN, TEXT_DIM, apply_row_height
+from ..theme import (
+    COLOR_IDLE,
+    COLOR_RUNNING,
+    COLOR_WARN,
+    TEXT_DIM,
+    apply_row_height,
+    fit_checkbox,
+    text_width,
+)
 from .widgets import (
     button,
     confirm,
@@ -129,8 +137,14 @@ class ProfilesView(QWidget):
 
         self.summary = QLabel("-")
         self.summary.setStyleSheet(f"color: {TEXT_DIM};")
+        # 汇总文案会随数量变长（"共 1234 个 · 占用 12.3 GB · 临时 56 个"），
+        # 给足最小宽度，避免被工具栏挤掉尾部
+        self.summary.setMinimumWidth(
+            text_width("共 9999 个 · 占用 999.9 GB · 临时 9999 个", self.summary, 16)
+        )
 
         self.only_temp = QCheckBox("只看临时")
+        fit_checkbox(self.only_temp)
         self.only_temp.stateChanged.connect(self._rerender)
 
         self.btn_delete = button("删除选中", "danger")

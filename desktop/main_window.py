@@ -22,7 +22,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .theme import COLOR_FAIL, COLOR_OK, COLOR_RUNNING, COLOR_WARN, TEXT_DIM
+from .theme import (
+    COLOR_FAIL,
+    COLOR_OK,
+    COLOR_RUNNING,
+    COLOR_WARN,
+    TEXT_DIM,
+    refit_widget_tree,
+)
 from .views import (
     AccountsView,
     BrowserView,
@@ -198,6 +205,19 @@ class MainWindow(QMainWindow):
         """设置页保存后调用：应用影响 GUI 自身的配置。"""
         interval = int(self.ctx.cfg.get("desktop.refresh_interval", 2000) or 2000)
         self._state_timer.setInterval(max(500, interval))
+
+    # ---------- 显示 ----------
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt 命名约定
+        """首次显示后按真实字体重算尺寸约束。
+
+        构造期只能按样式表标称字号估算，而 Qt 会按系统 DPI 缩放它
+        （125% → 18px，150% → 21px）。不重算的话，高缩放下勾选框、
+        输入框、表格行高都会差几个到十几像素，文字被裁掉一条。
+        """
+        super().showEvent(event)
+        if not getattr(self, "_refitted", False):
+            self._refitted = True
+            refit_widget_tree(self)
 
     # ---------- 关闭 ----------
     def closeEvent(self, event: QCloseEvent) -> None:

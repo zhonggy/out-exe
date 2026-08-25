@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 from browser import KERNEL_FINGERPRINT, KERNEL_PATCHRIGHT, describe_kernel
 
 from ..bridge.tasks import run_async
-from ..theme import COLOR_FAIL, COLOR_OK, COLOR_WARN, TEXT_DIM
+from ..theme import COLOR_FAIL, COLOR_OK, COLOR_WARN, TEXT_DIM, fit_all_checkboxes
 from .widgets import (
     KeyValueRow,
     button,
@@ -109,6 +109,8 @@ class BrowserView(QWidget):
         self.check_output.setPlainText("点击「检测环境」开始检查。")
         check_layout.addWidget(self.check_output, 1)
         layout.addWidget(check_box, 1)
+
+        fit_all_checkboxes(self)
 
     # ---------- 刷新 ----------
     def refresh(self) -> None:

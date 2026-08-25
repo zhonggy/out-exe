@@ -97,20 +97,10 @@ _PROBE = "等待验证Ag账号 account@example.com 128.5MB gjpqy"
 def text_height(widget=None, font_size: Optional[int] = None) -> int:
     """一行文字实际占用的像素高度。
 
-    优先用 widget 自身字体（样式表的 ``font-size`` 会反映到 ``widget.font()``，
-    已实测确认），拿不到就按系数保守估算。
+    按样式表字号量（见 ``_styled_metrics``），避免构造期偏小。
     """
     try:
-        from PySide6.QtGui import QFont, QFontMetrics
-
-        if widget is not None and font_size is None:
-            metrics = QFontMetrics(widget.font())
-        else:
-            font = QFont()
-            if widget is not None:
-                font = QFont(widget.font())
-            font.setPixelSize(int(font_size or FONT_SIZE))
-            metrics = QFontMetrics(font)
+        metrics = _styled_metrics(widget, font_size)
         # boundingRect 比 height() 更保守：某些字体的 height() 不含下伸部余量
         return max(metrics.height(), metrics.boundingRect(_PROBE).height())
     except Exception:
@@ -129,6 +119,155 @@ def row_height(widget=None, padding: int = 12, minimum: int = 30) -> int:
 def metric_height(widget=None) -> int:
     """仪表盘大数字所需高度。26px 字号写死 26 必然截断。"""
     return text_height(widget, FONT_SIZE_METRIC) + 6
+
+
+#: 样式表里 QSpinBox 的左右 padding（9px × 2）与上下按钮宽度
+_SPIN_PADDING = 18
+_SPIN_BUTTON = 20
+
+
+def _styled_metrics(widget=None, font_size: Optional[int] = None):
+    """按**样式表字号**而非构造期字号取字体度量。
+
+    控件在还没 parent、还没被样式表 polish 时，``widget.font()`` 返回的是
+    应用默认字体（9pt），比样式表的 14px 窄。构造期用它算宽高会偏小，
+    等样式生效后文字就放不下了。所以这里统一取两者的较大值。
+    """
+    from PySide6.QtGui import QFont, QFontMetrics
+
+    font = QFont(widget.font()) if widget is not None else QFont()
+    current = font.pixelSize()
+    font.setPixelSize(max(int(font_size or FONT_SIZE), current if current > 0 else 0))
+    return QFontMetrics(font)
+
+
+def text_width(text: str, widget=None, extra: int = 0, font_size: Optional[int] = None) -> int:
+    """一段文字的像素宽度（含额外留白）。"""
+    try:
+        return _styled_metrics(widget, font_size).horizontalAdvance(str(text)) + extra
+    except Exception:
+        return len(str(text)) * int((font_size or FONT_SIZE) * 0.62) + extra
+
+
+def fit_input(widget, sample: str, extra: int = 24, cap: Optional[int] = None) -> None:
+    """按内容样本给输入类控件设宽度上下限。
+
+    原来这些控件写的是 ``setMaximumWidth(260)`` 之类的固定值。固定像素在
+    字体变化时不跟着变 —— 中文字体 fallback 或用户单独调大系统字号后，
+    260px 装不下原本刚好装下的占位符，表现为「字显示不全」。
+    """
+    width = text_width(sample, widget, extra)
+    if cap is not None:
+        width = min(width, cap)
+    widget.setMinimumWidth(width)
+    # 上限留 1.6 倍余量：既不让输入框吃掉整行，也不至于卡死内容
+    widget.setMaximumWidth(int(width * 1.6))
+    # 记下样本，show 之后 refit_widget_tree() 会按真实字体重算
+    widget.setProperty("oa_fit_sample", sample)
+    widget.setProperty("oa_fit_extra", extra)
+
+
+def fit_checkbox(widget, extra: int = 30) -> None:
+    """勾选框宽度 = 文字宽 + 指示器与间距。
+
+    Qt 的 sizeHint 用默认间距算，样式表把 spacing 改成 7px 后会差几个像素，
+    中文最后一个字被裁掉一小条 —— 不明显但看着别扭。
+    """
+    widget.setMinimumWidth(text_width(widget.text(), widget, extra))
+
+
+def fit_all_checkboxes(root, extra: int = 30) -> None:
+    """给页面内所有勾选框按文字宽度设最小宽度。
+
+    逐个调 fit_checkbox 太啰嗦（设置页有 10 个），在 _build() 末尾
+    统一处理一次即可。
+    """
+    try:
+        from PySide6.QtWidgets import QCheckBox
+
+        for box in root.findChildren(QCheckBox):
+            fit_checkbox(box, extra)
+    except Exception:
+        pass
+
+
+def fit_label_height(widget, font_size: Optional[int] = None, extra: int = 4) -> None:
+    """按样式表字号给 Label 设最小高度。"""
+    try:
+        widget.setMinimumHeight(_styled_metrics(widget, font_size).height() + extra)
+    except Exception:
+        pass
+
+
+def fit_spinbox(spin, extra: int = 10) -> None:
+    """按最大值 + 后缀的文字宽度给 QSpinBox 设最小宽度。
+
+    两个坑：
+
+    1. Qt 算 sizeHint 时不知道样式表注入的 padding，也不知道我们把上下
+       按钮设成了 20px，算出来的内部编辑器宽度刚好等于文字宽度 —— 零余量，
+       光标进去就把数字挤掉一截。
+    2. **构造期的字体不是最终字体。** 控件还没 parent、还没被样式表 polish
+       时，``spin.font()`` 是应用默认字体（9pt），比样式表的 14px 窄。
+       用它量出来的宽度偏小，约束等于没设。所以这里显式按 FONT_SIZE 量。
+    """
+    try:
+        widest = f"{spin.prefix()}{spin.maximum()}{spin.suffix()}"
+        width = _styled_metrics(spin).horizontalAdvance(widest)
+        spin.setMinimumWidth(width + _SPIN_PADDING + _SPIN_BUTTON + extra)
+    except Exception:
+        pass
+
+
+def refit_widget_tree(root) -> None:
+    """按**当前真实字体**重算整棵控件树的尺寸约束。
+
+    为什么需要这一步：构造期只能按样式表标称字号（FONT_SIZE）估算，
+    而 Qt 会按系统 DPI 把样式表里的 px 缩放（125% → 18px，150% → 21px）。
+    缩放后的字比估算时宽，构造期设的最小宽度就不够了。
+
+    应在窗口 show 之后调用 —— 那时样式表已 polish，字体是最终值。
+    幂等，可以重复调（比如系统 DPI 变化时）。
+    """
+    try:
+        from PySide6.QtWidgets import (
+            QCheckBox,
+            QLabel,
+            QLineEdit,
+            QSpinBox,
+            QTableView,
+        )
+    except Exception:
+        return
+
+    for spin in root.findChildren(QSpinBox):
+        fit_spinbox(spin)
+
+    for box in root.findChildren(QCheckBox):
+        fit_checkbox(box)
+
+    for edit in root.findChildren(QLineEdit):
+        sample = edit.property("oa_fit_sample")
+        if sample:
+            fit_input(edit, str(sample), int(edit.property("oa_fit_extra") or 24))
+
+    for label in root.findChildren(QLabel):
+        # 只补高度：宽度由布局与省略策略处理
+        text = label.text()
+        if not text:
+            continue
+        role = label.property("role")
+        size = {
+            "title": FONT_SIZE_TITLE,
+            "metric": FONT_SIZE_METRIC,
+            "hint": FONT_SIZE_SMALL,
+        }.get(str(role) if role else "", None)
+        needed = text_height(label, size)
+        if label.minimumHeight() < needed:
+            label.setMinimumHeight(needed + (6 if role == "metric" else 2))
+
+    for table in root.findChildren(QTableView):
+        apply_row_height(table)
 
 
 def apply_row_height(table, padding: int = 12, minimum: int = 30) -> None:

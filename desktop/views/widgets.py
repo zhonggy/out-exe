@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..theme import TEXT, TEXT_DIM, metric_height, text_height
+from ..theme import TEXT, TEXT_DIM, fit_spinbox, metric_height, text_height
 
 
 def title_label(text: str) -> QLabel:
@@ -149,19 +149,28 @@ class KeyValueRow(QWidget):
             self._apply_elide()
 
 
-def toolbar(*widgets: QWidget, stretch_at: int = -1) -> QWidget:
-    """横向工具栏。stretch_at 指定在第几个控件后插入弹簧。"""
-    holder = QWidget()
-    layout = QHBoxLayout(holder)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(8)
-    for index, widget in enumerate(widgets):
-        layout.addWidget(widget)
-        if index == stretch_at:
-            layout.addStretch(1)
-    if stretch_at < 0:
-        layout.addStretch(1)
-    return holder
+def toolbar(
+    *widgets: QWidget,
+    stretch_at: int = -1,
+    expanding: Optional[int] = None,
+) -> QWidget:
+    """横向工具栏，放不下自动换行。
+
+    原来用 QHBoxLayout + 弹簧，窗口偏窄时 Qt 会压缩可伸缩控件而不是换行 ——
+    账号页 9 个控件在 1030px 宽下需要 1026px，搜索框被压到 74px，
+    占位符「搜索账号（回车）」根本显示不出来。
+
+    ``stretch_at`` 保留是为了兼容调用方，语义改为「该位置之后的控件
+    尽量排在后面」，实际由换行保证每个控件拿到完整宽度。
+    ``expanding`` 指定哪个控件吃掉本行剩余宽度（默认沿用 stretch_at 的位置）。
+    """
+    from .flow_layout import flow_toolbar
+
+    grow = expanding
+    if grow is None and stretch_at >= 0:
+        # 旧调用里 stretch_at 之前通常是搜索/筛选类控件，让它吃剩余宽度
+        grow = stretch_at if stretch_at < len(widgets) else None
+    return flow_toolbar(*widgets, expanding=grow)
 
 
 def button(
@@ -178,6 +187,35 @@ def button(
     btn.setEnabled(enabled)
     btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
     return btn
+
+
+def spinbox(
+    minimum: int,
+    maximum: int,
+    value: Optional[int] = None,
+    suffix: str = "",
+    step: int = 1,
+    tooltip: str = "",
+):
+    """构造一个宽度足够显示最大值的 QSpinBox。
+
+    直接 new QSpinBox 的话，样式表 padding 会把内部编辑器挤到刚好等于
+    文字宽度，数字被裁。这里统一走 fit_spinbox() 算宽度。
+    """
+    from PySide6.QtWidgets import QSpinBox
+
+    spin = QSpinBox()
+    spin.setRange(minimum, maximum)
+    if suffix:
+        spin.setSuffix(suffix)
+    if step != 1:
+        spin.setSingleStep(step)
+    if value is not None:
+        spin.setValue(value)
+    if tooltip:
+        spin.setToolTip(tooltip)
+    fit_spinbox(spin)
+    return spin
 
 
 def notify(widget: QWidget, message: str, level: str = "ok") -> None:

@@ -50,6 +50,7 @@ from .widgets import (
     human_time,
     info,
     notify,
+    spinbox,
     title_label,
     toolbar,
 )
@@ -167,8 +168,7 @@ class DispatchDialog(QDialog):
         for name in flows or ["login"]:
             self.flow.addItem(name)
 
-        self.limit = QSpinBox()
-        self.limit.setRange(1, max(1, DISPATCH_SOFT_LIMIT))
+        self.limit = spinbox(1, max(1, DISPATCH_SOFT_LIMIT))
         # 默认全部待处理账号：用户点派发通常就是想跑完手上的账号，
         # 原来默认取「并发数 × 10」是个没有依据的魔法值
         self.limit.setValue(max(1, min(self._pending or 1, DISPATCH_SOFT_LIMIT)))
@@ -178,10 +178,7 @@ class DispatchDialog(QDialog):
             f"单次上限：{DISPATCH_SOFT_LIMIT}（更多请分批派发）"
         )
 
-        self.priority = QSpinBox()
-        self.priority.setRange(-100, 100)
-        self.priority.setValue(0)
-        self.priority.setToolTip("数值越大越先执行")
+        self.priority = spinbox(-100, 100, value=0, tooltip="数值越大越先执行")
 
         form.addRow("流程", self.flow)
         form.addRow("数量", self.limit)
@@ -324,15 +321,15 @@ class TasksView(QWidget):
         self.state_label = QLabel("执行进程：未运行")
         self.state_label.setStyleSheet(f"color: {TEXT_DIM}; font-weight: 600;")
 
-        self.workers_spin = QSpinBox()
-        self.workers_spin.setRange(1, 16)
-        self.workers_spin.setValue(
-            int(self.ctx.cfg.get("system.max_workers", 1) or 1)
-        )
-        self.workers_spin.setToolTip(
-            "同时并行处理的账号数。每个线程独占一个浏览器实例。\n\n"
-            "默认 1（逐个处理）。调高能提速，但内存与 CPU 占用同比上升，"
-            "且同时打开多个浏览器更容易被目标站点识别为异常流量。"
+        self.workers_spin = spinbox(
+            1,
+            16,
+            value=int(self.ctx.cfg.get("system.max_workers", 1) or 1),
+            tooltip=(
+                "同时并行处理的账号数。每个线程独占一个浏览器实例。\n\n"
+                "默认 1（逐个处理）。调高能提速，但内存与 CPU 占用同比上升，"
+                "且同时打开多个浏览器更容易被目标站点识别为异常流量。"
+            ),
         )
 
         self.btn_start = button("开始执行", "primary")
