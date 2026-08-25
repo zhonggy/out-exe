@@ -218,6 +218,38 @@ def spinbox(
     return spin
 
 
+def attach_overflow_tooltip(edit, hint: str = "") -> None:
+    """内容超出可视宽度时，悬停显示全文。
+
+    窗口宽度有物理上限：1030px 窗口在 150% 缩放下等效逻辑宽度只剩约
+    687px，而一条带长 token 的 URL 要 1070px —— 装不下是必然的。
+    Qt 会横向滚动，但用户看不到全貌，所以用 tooltip 补上。
+
+    ``hint`` 是格式说明，始终附在 tooltip 末尾。
+    """
+    from PySide6.QtGui import QFontMetrics
+
+    def refresh() -> None:
+        text = edit.text()
+        parts = []
+        if text:
+            metrics = QFontMetrics(edit.font())
+            # 只在真的放不下时才把全文塞进 tooltip，避免无谓的悬浮框
+            if metrics.horizontalAdvance(text) > max(1, edit.width() - 20):
+                parts.append(text)
+        if hint:
+            parts.append(hint)
+        edit.setToolTip("\n\n".join(parts))
+
+    edit.textChanged.connect(refresh)
+    refresh()
+    # 存一份引用，防止闭包被 GC（Qt 侧只持有弱引用）
+    edit.setProperty("oa_overflow_hint", hint)
+    if not hasattr(edit, "_oa_refs"):
+        edit._oa_refs = []
+    edit._oa_refs.append(refresh)
+
+
 def notify(widget: QWidget, message: str, level: str = "ok") -> None:
     """向主窗口状态栏回报操作结果。
 

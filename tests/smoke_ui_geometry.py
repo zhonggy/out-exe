@@ -15,8 +15,16 @@
 本测试按 100%/125%/150% 三档缩放、两种窗口宽度，逐控件对比
 "实际可用尺寸" vs "文字需要的尺寸"。
 
-判定注意：不能用 ``sizeHint()``。QLineEdit 的 sizeHint 是按约 17 个字符的
-平均宽度算的固定值（~242px），与实际内容无关，会产生大量假阳性。
+判定注意：
+
+- 不能用 ``sizeHint()``。QLineEdit 的 sizeHint 是按约 17 个字符的平均宽度算的
+  固定值（~242px），与实际内容无关，会产生大量假阳性。
+- 内容宽度超出可视区不一定是 bug：窗口宽度有物理上限，1030px 窗口在 150%
+  缩放下等效逻辑宽度只剩约 687px，一条带长 token 的 URL 要 1070px，装不下是
+  必然的。判定标准是「放不下时有没有 tooltip 兜底」。
+- offscreen 平台的 ``descent`` 恒为 0（``height() == pixelSize``），真实
+  Windows 上中文字体的 height 约为字号的 1.33 倍。所以高度判定走
+  ``theme.input_min_height()``，它对字号取系数兜底而不只信实测值。
 """
 
 from __future__ import annotations
@@ -42,6 +50,29 @@ PAGES = ["仪表盘", "账号管理", "任务管理", "运行日志", "浏览器
 #: 各档 DPI 缩放。真实用户里 125%/150% 是笔记本默认值。
 SCALES = ((1.0, "100%"), (1.25, "125%"), (1.5, "150%"))
 WIDTHS = (1030, 1280)
+
+#: 真实 Windows 上中文字体 height()/pixelSize 的比例（微软雅黑约 1.33）
+CJK_HEIGHT_RATIO = 1.33
+
+#: 样式表给输入类控件的上下 padding（6×2）+ 边框（1×2）
+INPUT_VPAD = 14
+
+
+def required_input_height(widget) -> int:
+    """输入类控件需要的最小高度 —— 独立判定，不依赖被测实现。
+
+    offscreen 平台的 ``descent`` 恒为 0（``height() == pixelSize``），
+    用它判会漏掉真机上的裁字。``lineSpacing()`` 在 offscreen 下不退化
+    （14px → 16），再与「字号 × 1.33」取大，兼顾两种环境。
+    """
+    from PySide6.QtGui import QFontMetrics
+
+    font = widget.font()
+    metrics = QFontMetrics(font)
+    pixels = font.pixelSize()
+    if pixels <= 0:
+        pixels = max(1, metrics.height())
+    return max(metrics.lineSpacing(), int(pixels * CJK_HEIGHT_RATIO)) + INPUT_VPAD
 
 
 def main() -> int:
@@ -180,6 +211,23 @@ def main() -> int:
             if box.width() + 2 < need:
                 issues.append(("CheckBox", box.text()[:22], f"w={box.width()} 需要={need}"))
 
+        # 输入类控件高度。
+        #
+        # 判定标准在测试内独立计算，**不调用 theme.input_min_height()** ——
+        # 否则实现放宽时判定标准跟着放宽，形成自证循环（踩过：回退兜底系数
+        # 后测试仍全绿）。
+        for widget in (
+            page.findChildren(QLineEdit)
+            + page.findChildren(QComboBox)
+            + page.findChildren(QSpinBox)
+        ):
+            if not widget.isVisible():
+                continue
+            need = required_input_height(widget)
+            if widget.height() + 1 < need:
+                kind = type(widget).__name__
+                issues.append((f"{kind}高", "-", f"h={widget.height()} 需要={need}"))
+
         for edit in page.findChildren(QLineEdit):
             if id(edit) in inner or not edit.isVisible():
                 continue
@@ -189,7 +237,14 @@ def main() -> int:
             metrics = QFontMetrics(edit.font())
             need = metrics.horizontalAdvance(probe) + 20
             if edit.width() + 2 < need:
-                issues.append(("LineEdit", probe[:28], f"w={edit.width()} 需要={need}"))
+                # 内容确实放不下时，必须有 tooltip 让用户能看到全文。
+                # 窗口宽度有物理上限，长 URL 装不下是必然的，不算 bug；
+                # 没有兜底手段才算。
+                if probe in (edit.toolTip() or ""):
+                    continue
+                issues.append(
+                    ("LineEdit", probe[:28], f"w={edit.width()} 需要={need} 且无 tooltip 兜底")
+                )
 
         for table in page.findChildren(QTableView):
             if not table.isVisible():

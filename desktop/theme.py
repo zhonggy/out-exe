@@ -149,22 +149,72 @@ def text_width(text: str, widget=None, extra: int = 0, font_size: Optional[int] 
         return len(str(text)) * int((font_size or FONT_SIZE) * 0.62) + extra
 
 
-def fit_input(widget, sample: str, extra: int = 24, cap: Optional[int] = None) -> None:
-    """按内容样本给输入类控件设宽度上下限。
+#: 样式表给输入类控件的上下 padding（6px × 2）与边框（1px × 2）
+_INPUT_VPAD = 14
+
+
+def input_min_height(widget=None) -> int:
+    """输入类控件（QLineEdit / QComboBox / QSpinBox）的最小高度。
+
+    样式表里写的 ``min-height: 18px`` 是错的：真实 Windows 上中文字体的
+    ``QFontMetrics.height()`` 约为像素字号的 1.33 倍（14px → 19px），
+    加上 padding+border 的 14px 就需要 33px，而 min-height 路径只给
+    18+14=32px —— 差 1px，字底部被切掉一条。125% 缩放（18px 字号）差 6px。
+
+    offscreen 平台的 descent 恒为 0（height() == pixelSize），所以这个
+    差异在自动化测试里看不出来，只有真机才暴露。因此这里不依赖度量的
+    descent，而是对字号取 1.33 系数兜底。
+    """
+    measured = text_height(widget)
+    try:
+        px = widget.font().pixelSize() if widget is not None else FONT_SIZE
+    except Exception:
+        px = FONT_SIZE
+    if px <= 0:
+        px = FONT_SIZE
+    # 取实测与按系数推算的较大值：兼容 offscreen 与真机
+    return max(measured, int(px * _CJK_LINE_RATIO)) + _INPUT_VPAD
+
+
+def fit_input_height(widget) -> None:
+    """给输入类控件设最小高度，避免中文被裁掉底部一条。"""
+    try:
+        widget.setMinimumHeight(input_min_height(widget))
+    except Exception:
+        pass
+
+
+def fit_input(
+    widget,
+    sample: str,
+    extra: int = 24,
+    cap: Optional[int] = None,
+    grow: bool = False,
+) -> None:
+    """按内容样本给输入类控件设宽度上下限与最小高度。
 
     原来这些控件写的是 ``setMaximumWidth(260)`` 之类的固定值。固定像素在
     字体变化时不跟着变 —— 中文字体 fallback 或用户单独调大系统字号后，
     260px 装不下原本刚好装下的占位符，表现为「字显示不全」。
+
+    ``grow=True``：该控件应吃满可用宽度（如 URL 这种内容远长于占位符的），
+    不设宽度上限，并配合 ``flow_toolbar(expanding=...)`` 拿到整行剩余空间。
     """
     width = text_width(sample, widget, extra)
     if cap is not None:
         width = min(width, cap)
     widget.setMinimumWidth(width)
-    # 上限留 1.6 倍余量：既不让输入框吃掉整行，也不至于卡死内容
-    widget.setMaximumWidth(int(width * 1.6))
+    if grow:
+        # 不设上限：真实内容（如带长 token 的 URL）常比占位符长得多
+        widget.setMaximumWidth(16777215)
+    else:
+        # 上限留 1.6 倍余量：既不让输入框吃掉整行，也不至于卡死内容
+        widget.setMaximumWidth(int(width * 1.6))
+    fit_input_height(widget)
     # 记下样本，show 之后 refit_widget_tree() 会按真实字体重算
     widget.setProperty("oa_fit_sample", sample)
     widget.setProperty("oa_fit_extra", extra)
+    widget.setProperty("oa_fit_grow", grow)
 
 
 def fit_checkbox(widget, extra: int = 30) -> None:
@@ -232,6 +282,7 @@ def refit_widget_tree(root) -> None:
     try:
         from PySide6.QtWidgets import (
             QCheckBox,
+            QComboBox,
             QLabel,
             QLineEdit,
             QSpinBox,
@@ -242,6 +293,10 @@ def refit_widget_tree(root) -> None:
 
     for spin in root.findChildren(QSpinBox):
         fit_spinbox(spin)
+        fit_input_height(spin)
+
+    for combo in root.findChildren(QComboBox):
+        fit_input_height(combo)
 
     for box in root.findChildren(QCheckBox):
         fit_checkbox(box)
@@ -249,7 +304,15 @@ def refit_widget_tree(root) -> None:
     for edit in root.findChildren(QLineEdit):
         sample = edit.property("oa_fit_sample")
         if sample:
-            fit_input(edit, str(sample), int(edit.property("oa_fit_extra") or 24))
+            fit_input(
+                edit,
+                str(sample),
+                int(edit.property("oa_fit_extra") or 24),
+                grow=bool(edit.property("oa_fit_grow")),
+            )
+        else:
+            # 没登记样本的（含 QSpinBox 内部编辑器）也要补高度
+            fit_input_height(edit)
 
     for label in root.findChildren(QLabel):
         # 只补高度：宽度由布局与省略策略处理
@@ -322,7 +385,7 @@ QPushButton {{
     border: 1px solid {BORDER};
     border-radius: 6px;
     padding: 7px 16px;
-    min-height: 18px;
+    min-height: {int(FONT_SIZE * _CJK_LINE_RATIO)}px;
 }}
 QPushButton:hover {{
     background: {BG_HOVER};
@@ -358,7 +421,9 @@ QLineEdit, QComboBox, QSpinBox, QPlainTextEdit, QTextEdit {{
     border: 1px solid {BORDER};
     border-radius: 6px;
     padding: 6px 9px;
-    min-height: 18px;
+    /* 中文字体的 height() 约为字号的 1.33 倍，写 18px 会裁掉底部一条。
+       真实高度由 theme.input_min_height() 按运行时字体算，这里只兜首帧。 */
+    min-height: {int(FONT_SIZE * _CJK_LINE_RATIO)}px;
     selection-background-color: {ACCENT};
 }}
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus {{
@@ -376,7 +441,7 @@ QComboBox QAbstractItemView {{
     padding: 4px;
 }}
 QComboBox QAbstractItemView::item {{
-    min-height: 24px;
+    min-height: {int(FONT_SIZE * _CJK_LINE_RATIO) + 8}px;
     padding: 4px 6px;
 }}
 QSpinBox::up-button, QSpinBox::down-button {{
@@ -385,7 +450,7 @@ QSpinBox::up-button, QSpinBox::down-button {{
 QCheckBox {{
     spacing: 7px;
     padding: 2px 0;
-    min-height: 20px;
+    min-height: {int(FONT_SIZE * _CJK_LINE_RATIO) + 4}px;
 }}
 
 QListWidget[role="nav"] {{
@@ -398,7 +463,7 @@ QListWidget[role="nav"] {{
 QListWidget[role="nav"]::item {{
     padding: 11px 18px;
     border-left: 3px solid transparent;
-    min-height: 22px;
+    min-height: {int(FONT_SIZE * _CJK_LINE_RATIO) + 4}px;
 }}
 QListWidget[role="nav"]::item:selected {{
     background: {BG_HOVER};
@@ -462,7 +527,7 @@ QStatusBar {{
     background: {BG_ALT};
     border-top: 1px solid {BORDER};
     color: {TEXT_DIM};
-    min-height: 26px;
+    min-height: {int(FONT_SIZE * _CJK_LINE_RATIO) + 10}px;
 }}
 QStatusBar::item {{
     border: none;
@@ -476,7 +541,7 @@ QProgressBar {{
     border: 1px solid {BORDER};
     border-radius: 6px;
     text-align: center;
-    min-height: 20px;
+    min-height: {int(FONT_SIZE * _CJK_LINE_RATIO) + 4}px;
 }}
 QProgressBar::chunk {{
     background: {ACCENT};

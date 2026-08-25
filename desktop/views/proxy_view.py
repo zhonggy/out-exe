@@ -41,6 +41,7 @@ from ..theme import (
 )
 from .widgets import (
     KeyValueRow,
+    attach_overflow_tooltip,
     button,
     confirm,
     error,
@@ -145,7 +146,8 @@ class ProxyView(QWidget):
         self.local_type.addItem("http", "http")
         self.local_type.addItem("socks5", "socks5")
         self.local_host = QLineEdit()
-        fit_input(self.local_host, "255.255.255.255", extra=32)
+        # 可能填域名而非 IP，给足余量
+        fit_input(self.local_host, "proxy.example.com", extra=32)
         self.local_single_port = spinbox(1, 65535)
         self.local_port_start = spinbox(1, 65535)
         self.local_port_end = spinbox(1, 65535)
@@ -192,15 +194,23 @@ class ProxyView(QWidget):
 
         self.resin_enabled = QCheckBox("启用（优先于本地代理池）")
         self.resin_enabled.stateChanged.connect(self._update_active_label)
+
         self.resin_url = QLineEdit()
         self.resin_url.setPlaceholderText("http://127.0.0.1:2260/your-token")
-        # 地址较长，单独给足宽度；它占满整行，上限放宽
+        # 真实地址带长 token，比占位符长得多（实测 700px vs 480px）。
+        # grow=True 去掉宽度上限，配合 expanding 吃满整行剩余空间。
         fit_input(
             self.resin_url,
             "http://127.0.0.1:2260/your-token",
             extra=32,
+            grow=True,
         )
-        self.resin_url.setMaximumWidth(16777215)
+        attach_overflow_tooltip(
+            self.resin_url,
+            "格式 http://host:port/token\n"
+            "Token 是路径最后一段，不会出现在任何日志里。",
+        )
+
         self.resin_platform = QLineEdit()
         fit_input(self.resin_platform, "DefaultPlatform", extra=32)
         self.resin_identity = QComboBox()
@@ -208,14 +218,16 @@ class ProxyView(QWidget):
         self.resin_identity.addItem("完整邮箱 email", "email")
 
         layout.addWidget(self.resin_enabled)
-        layout.addWidget(toolbar(QLabel("地址"), self.resin_url, stretch_at=-1))
+        # 地址单独一行并吃满宽度：expanding 指向输入框（索引 1）
+        layout.addWidget(
+            toolbar(QLabel("地址"), self.resin_url, expanding=1)
+        )
         layout.addWidget(
             toolbar(
                 QLabel("平台名"),
                 self.resin_platform,
                 QLabel("账号标识"),
                 self.resin_identity,
-                stretch_at=3,
             )
         )
 
