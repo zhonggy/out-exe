@@ -1,4 +1,4 @@
-"""界面主题：深色配色 + 状态色 + 字体度量。
+"""界面主题：浅色配色 + 状态色 + 字体度量。
 
 **行高不写死。** 中文字体的 ``QFontMetrics.height()`` 通常是像素字号的
 1.3~1.4 倍（西文约 1.15 倍），再叠加 Windows 的 DPI 缩放（125%/150%/175%），
@@ -25,19 +25,53 @@ _CJK_LINE_RATIO = 1.45
 
 # ---------------------------------------------------------------- 颜色
 # 状态色。语义：绿=成功，红=失败，橙=需人工介入，蓝=进行中，灰=未开始
-COLOR_OK = "#3fb950"
-COLOR_FAIL = "#f85149"
-COLOR_WARN = "#d29922"
-COLOR_RUNNING = "#58a6ff"
-COLOR_IDLE = "#8b949e"
+#
+# 浅色底下的取值比深色麻烦：深色主题用的亮色（如 #3fb950 绿）在白底上
+# 对比度只有 2.3:1，远低于 WCAG AA 要求的 4.5:1，看着发飘且不易读。
+# 这里全部换成压暗后的同色系，实测对比度均 ≥ 4.5:1。
+COLOR_OK = "#166f2f"        # 绿。压暗到在选中行底色上也 ≥4.5:1
+COLOR_FAIL = "#cf222e"      # 红，对比度 5.0:1
+COLOR_WARN = "#8a5c00"      # 琥珀。纯橙在白底上远不达标，只能走深琥珀
+COLOR_RUNNING = "#0a6e8a"   # 青蓝，对比度 5.0:1
+                            # 刻意偏青：与交互蓝 ACCENT(#0067c0) 拉开距离，
+                            # 否则"运行中"状态文字和主色按钮同色，
+                            # 用户分不清哪个是可点的
+COLOR_IDLE = "#5f6b78"      # 灰。与 TEXT_DIM 刻意接近：都表示"次要"
 
-BG = "#0d1117"
-BG_ALT = "#161b22"
-BG_HOVER = "#1f2733"
-BORDER = "#30363d"
-TEXT = "#e6edf3"
-TEXT_DIM = "#8b949e"
-ACCENT = "#1f6feb"
+#: 背景三层：窗口底 < 卡片 < 悬停。浅色下层次靠"压暗"而非"提亮"
+BG = "#f5f6f8"              # 窗口底：轻微灰，避免纯白刺眼
+BG_ALT = "#ffffff"          # 卡片/输入框：纯白，浮在灰底上形成层次
+BG_HOVER = "#eef1f5"        # 悬停：比窗口底再暗一点
+BORDER = "#d4d9e0"          # 常规边框
+BORDER_STRONG = "#b6bec9"   # 强调边框（悬停、聚焦邻域）
+
+TEXT = "#1f2328"            # 正文：近黑而非纯黑，减少眩光
+TEXT_DIM = "#5c6773"        # 次要文字，对比度 5.6:1
+TEXT_ON_ACCENT = "#ffffff"  # 主色按钮上的文字
+
+ACCENT = "#0067c0"          # Windows 11 强调蓝
+ACCENT_HOVER = "#1a7ad4"
+ACCENT_PRESSED = "#005499"
+ACCENT_SOFT = "#eef5fd"     # 主色的浅底（选中行、导航高亮）。
+                            # 比 #e8f1fb 更浅：作为大面积背景既不抢眼，
+                            # 也给状态色文字留出对比度空间
+
+#: 危险操作按钮的浅色底
+DANGER_BG = "#fdf0ef"
+DANGER_BORDER = "#e5b3ae"
+DANGER_HOVER = "#fbe0de"
+
+#: 表格斑马纹与表头
+ROW_ALT = "#fafbfc"
+HEADER_BG = "#f0f2f5"
+
+#: 滚动条
+SCROLL_HANDLE = "#c3cad3"
+SCROLL_HANDLE_HOVER = "#a3adba"
+
+#: 禁用态
+DISABLED_TEXT = "#a0a8b3"
+DISABLED_BG = "#f0f1f3"
 
 #: 账号状态 → 颜色。键与 database.models.AccountStatus 一致
 ACCOUNT_STATUS_COLORS: Dict[str, str] = {
@@ -353,6 +387,7 @@ QWidget {{
 }}
 QLabel {{
     /* 中文字形比西文高，不给上下留白会贴边甚至被裁 */
+    background: transparent;
     padding: 1px 0;
 }}
 QLabel[role="title"] {{
@@ -389,31 +424,49 @@ QPushButton {{
 }}
 QPushButton:hover {{
     background: {BG_HOVER};
-    border-color: #484f58;
+    border-color: {BORDER_STRONG};
 }}
 QPushButton:pressed {{
-    background: #10151c;
+    background: {BORDER};
 }}
 QPushButton:disabled {{
-    color: #484f58;
-    background: #10151c;
+    color: {DISABLED_TEXT};
+    background: {DISABLED_BG};
+    border-color: {BORDER};
 }}
 QPushButton[variant="primary"] {{
     background: {ACCENT};
     border-color: {ACCENT};
-    color: #ffffff;
+    color: {TEXT_ON_ACCENT};
     font-weight: 600;
 }}
 QPushButton[variant="primary"]:hover {{
-    background: #388bfd;
+    background: {ACCENT_HOVER};
+    border-color: {ACCENT_HOVER};
+}}
+QPushButton[variant="primary"]:pressed {{
+    background: {ACCENT_PRESSED};
+    border-color: {ACCENT_PRESSED};
+}}
+QPushButton[variant="primary"]:disabled {{
+    background: {DISABLED_BG};
+    border-color: {BORDER};
+    color: {DISABLED_TEXT};
 }}
 QPushButton[variant="danger"] {{
-    background: #21262d;
-    border-color: #6e2c2c;
+    background: {DANGER_BG};
+    border-color: {DANGER_BORDER};
     color: {COLOR_FAIL};
+    font-weight: 600;
 }}
 QPushButton[variant="danger"]:hover {{
-    background: #3d1d1d;
+    background: {DANGER_HOVER};
+    border-color: {COLOR_FAIL};
+}}
+QPushButton[variant="danger"]:disabled {{
+    background: {DISABLED_BG};
+    border-color: {BORDER};
+    color: {DISABLED_TEXT};
 }}
 
 QLineEdit, QComboBox, QSpinBox, QPlainTextEdit, QTextEdit {{
@@ -425,9 +478,18 @@ QLineEdit, QComboBox, QSpinBox, QPlainTextEdit, QTextEdit {{
        真实高度由 theme.input_min_height() 按运行时字体算，这里只兜首帧。 */
     min-height: {int(FONT_SIZE * _CJK_LINE_RATIO)}px;
     selection-background-color: {ACCENT};
+    selection-color: {TEXT_ON_ACCENT};
 }}
-QLineEdit:focus, QComboBox:focus, QSpinBox:focus {{
+QLineEdit:hover, QComboBox:hover, QSpinBox:hover {{
+    border-color: {BORDER_STRONG};
+}}
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus,
+QPlainTextEdit:focus, QTextEdit:focus {{
     border-color: {ACCENT};
+}}
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled {{
+    background: {DISABLED_BG};
+    color: {DISABLED_TEXT};
 }}
 QComboBox::drop-down {{
     width: 20px;
@@ -436,9 +498,11 @@ QComboBox::drop-down {{
 QComboBox QAbstractItemView {{
     background: {BG_ALT};
     border: 1px solid {BORDER};
-    selection-background-color: {ACCENT};
+    selection-background-color: {ACCENT_SOFT};
+    selection-color: {TEXT};
     /* 下拉项同样需要足够行高，否则中文被裁 */
     padding: 4px;
+    outline: none;
 }}
 QComboBox QAbstractItemView::item {{
     min-height: {int(FONT_SIZE * _CJK_LINE_RATIO) + 8}px;
@@ -446,11 +510,39 @@ QComboBox QAbstractItemView::item {{
 }}
 QSpinBox::up-button, QSpinBox::down-button {{
     width: 18px;
+    background: transparent;
+    border: none;
+}}
+QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
+    background: {BG_HOVER};
 }}
 QCheckBox {{
     spacing: 7px;
     padding: 2px 0;
+    background: transparent;
     min-height: {int(FONT_SIZE * _CJK_LINE_RATIO) + 4}px;
+}}
+QCheckBox::indicator {{
+    width: 15px;
+    height: 15px;
+    border: 1px solid {BORDER_STRONG};
+    border-radius: 3px;
+    background: {BG_ALT};
+}}
+QCheckBox::indicator:hover {{
+    border-color: {ACCENT};
+}}
+QCheckBox::indicator:checked {{
+    background: {ACCENT};
+    border-color: {ACCENT};
+    /* 内嵌 SVG 对勾：不依赖外部资源文件，打包时无需额外 datas */
+    image: url("data:image/svg+xml;utf8,\
+<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'>\
+<path d='M2.5 6.2l2.3 2.3 4.7-4.9' fill='none' stroke='white' \
+stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+}}
+QCheckBox:disabled {{
+    color: {DISABLED_TEXT};
 }}
 
 QListWidget[role="nav"] {{
@@ -463,15 +555,22 @@ QListWidget[role="nav"] {{
 QListWidget[role="nav"]::item {{
     padding: 11px 18px;
     border-left: 3px solid transparent;
+    color: {TEXT_DIM};
     min-height: {int(FONT_SIZE * _CJK_LINE_RATIO) + 4}px;
 }}
 QListWidget[role="nav"]::item:selected {{
-    background: {BG_HOVER};
+    background: {ACCENT_SOFT};
     border-left-color: {ACCENT};
-    color: #ffffff;
+    color: {ACCENT};
+    font-weight: 600;
 }}
 QListWidget[role="nav"]::item:hover {{
     background: {BG_HOVER};
+    color: {TEXT};
+}}
+QListWidget[role="nav"]::item:selected:hover {{
+    background: {ACCENT_SOFT};
+    color: {ACCENT};
 }}
 
 QTableView {{
@@ -479,12 +578,13 @@ QTableView {{
     border: 1px solid {BORDER};
     border-radius: 6px;
     gridline-color: {BORDER};
-    selection-background-color: #1c3d5a;
+    selection-background-color: {ACCENT_SOFT};
     selection-color: {TEXT};
-    alternate-background-color: #12171f;
+    alternate-background-color: {ROW_ALT};
+    outline: none;
 }}
 QHeaderView::section {{
-    background: #1c2128;
+    background: {HEADER_BG};
     color: {TEXT_DIM};
     border: none;
     border-right: 1px solid {BORDER};
@@ -495,6 +595,10 @@ QHeaderView::section {{
 QTableView::item {{
     padding: 6px 8px;
 }}
+QTableCornerButton::section {{
+    background: {HEADER_BG};
+    border: none;
+}}
 
 QScrollBar:vertical {{
     background: transparent;
@@ -502,25 +606,31 @@ QScrollBar:vertical {{
     margin: 0;
 }}
 QScrollBar::handle:vertical {{
-    background: #30363d;
+    background: {SCROLL_HANDLE};
     border-radius: 5px;
     min-height: 30px;
 }}
 QScrollBar::handle:vertical:hover {{
-    background: #484f58;
+    background: {SCROLL_HANDLE_HOVER};
 }}
 QScrollBar::add-line, QScrollBar::sub-line {{
     height: 0;
     width: 0;
+}}
+QScrollBar::add-page, QScrollBar::sub-page {{
+    background: transparent;
 }}
 QScrollBar:horizontal {{
     background: transparent;
     height: 11px;
 }}
 QScrollBar::handle:horizontal {{
-    background: #30363d;
+    background: {SCROLL_HANDLE};
     border-radius: 5px;
     min-width: 30px;
+}}
+QScrollBar::handle:horizontal:hover {{
+    background: {SCROLL_HANDLE_HOVER};
 }}
 
 QStatusBar {{
@@ -534,10 +644,11 @@ QStatusBar::item {{
 }}
 QStatusBar QLabel {{
     padding: 2px 6px;
+    background: transparent;
 }}
 
 QProgressBar {{
-    background: {BG_ALT};
+    background: {BG_HOVER};
     border: 1px solid {BORDER};
     border-radius: 6px;
     text-align: center;
@@ -549,6 +660,7 @@ QProgressBar::chunk {{
 }}
 
 QGroupBox {{
+    background: {BG_ALT};
     border: 1px solid {BORDER};
     border-radius: 8px;
     margin-top: 16px;
@@ -559,13 +671,14 @@ QGroupBox::title {{
     left: 12px;
     padding: 0 6px;
     color: {TEXT_DIM};
+    background: {BG_ALT};
     font-weight: 600;
 }}
 
 QToolTip {{
-    background: #1c2128;
-    color: {TEXT};
-    border: 1px solid {BORDER};
+    background: {TEXT};
+    color: {BG_ALT};
+    border: 1px solid {TEXT};
     padding: 5px 8px;
 }}
 
@@ -583,6 +696,39 @@ QDialogButtonBox QPushButton {{
 
 
 def apply_theme(app) -> None:
-    """应用 Fusion 风格 + 深色样式表。"""
+    """应用 Fusion 风格 + 浅色样式表。
+
+    同时设置 palette：Qt 的原生绘制路径（如 QTableView 的空白区、
+    QComboBox 的下拉阴影）不完全走样式表，只改样式表会留下深色残块。
+    """
     app.setStyle("Fusion")
+    _apply_palette(app)
     app.setStyleSheet(STYLESHEET)
+
+
+def _apply_palette(app) -> None:
+    """把浅色值写进 QPalette，兜住样式表覆盖不到的原生绘制。"""
+    try:
+        from PySide6.QtGui import QColor, QPalette
+    except Exception:
+        return
+
+    palette = QPalette()
+    palette.setColor(QPalette.Window, QColor(BG))
+    palette.setColor(QPalette.WindowText, QColor(TEXT))
+    palette.setColor(QPalette.Base, QColor(BG_ALT))
+    palette.setColor(QPalette.AlternateBase, QColor(ROW_ALT))
+    palette.setColor(QPalette.Text, QColor(TEXT))
+    palette.setColor(QPalette.Button, QColor(BG_ALT))
+    palette.setColor(QPalette.ButtonText, QColor(TEXT))
+    palette.setColor(QPalette.Highlight, QColor(ACCENT))
+    palette.setColor(QPalette.HighlightedText, QColor(TEXT_ON_ACCENT))
+    palette.setColor(QPalette.ToolTipBase, QColor(TEXT))
+    palette.setColor(QPalette.ToolTipText, QColor(BG_ALT))
+    palette.setColor(QPalette.PlaceholderText, QColor(TEXT_DIM))
+    palette.setColor(QPalette.Link, QColor(ACCENT))
+    for group in (QPalette.Disabled,):
+        palette.setColor(group, QPalette.Text, QColor(DISABLED_TEXT))
+        palette.setColor(group, QPalette.ButtonText, QColor(DISABLED_TEXT))
+        palette.setColor(group, QPalette.WindowText, QColor(DISABLED_TEXT))
+    app.setPalette(palette)

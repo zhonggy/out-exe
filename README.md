@@ -144,6 +144,7 @@ OutlookAutomation/
 │   └── assemble_dist.py     组装打包产物 + 完整性校验
 ├── tests/
 │   ├── test_core.py         49 个单元测试（不需要浏览器）
+│   ├── test_theme_contrast.py  配色对比度审计（9 个用例）
 │   ├── smoke_gui.py         GUI 冒烟（offscreen）
 │   └── smoke_ipc.py         IPC 端到端冒烟
 ├── build.spec               PyInstaller onedir 配置
@@ -261,7 +262,7 @@ GUI 与执行进程之间走本机命名管道（Windows `AF_PIPE` / POSIX Unix 
 ## 测试
 
 ```bash
-python -m pytest tests -q                       # 49 passed，不启动浏览器
+python -m pytest tests -q                       # 58 passed，不启动浏览器
 QT_QPA_PLATFORM=offscreen python tests/smoke_gui.py   # GUI 冒烟
 python tests/smoke_ipc.py                       # IPC 端到端冒烟
 ```
@@ -302,6 +303,9 @@ python tests/smoke_ui_geometry.py   # 逐控件几何：文字是否放得下
   覆盖 3 档缩放 × 2 种窗口宽度。关掉 show 后的重算，它在 125% 报 10 处、
   150% 报 16 处
 
+另有 `tests/test_theme_contrast.py`（走 pytest，9 个用例）纯算色值不依赖渲染：
+WCAG 对比度、状态色可区分性、样式表无深色残留。把浅色值换回深色会立刻报 6 项失败。
+
 CI 上这八项都是打包的前置门禁，任一失败不产出安装包。
 
 端到端也已实测：headless 双 Worker 并发跑 4 个任务全部 COMPLETED，
@@ -324,6 +328,18 @@ CI 上这八项都是打包的前置门禁，任一失败不产出安装包。
 账号页 9 个控件在 1030px 宽下需要 1026px，搜索框被压到 74px，占位符
 完全看不见。`views/flow_layout.py` 的 `FlowLayout` 改为折行，
 每个控件都拿到完整宽度。
+
+**配色是浅色（柔和灰白 + Windows 蓝）。** 色值集中在 `theme.py`，
+状态色与背景层次都有命名常量，改主题只需动那一处。
+
+浅色比深色难调的地方：深色下"提亮"总能拉开对比，浅色下压暗过头会发脏、
+不够又发飘。深色主题用的亮绿 `#3fb950` 在白底上对比度只有 2.3:1，
+远低于 WCAG AA 的 4.5:1，所以状态色全部重挑过。
+
+另一个坑是表格有三种底色（白行 / 斑马行 / 选中行），只在白底上验对比度
+会漏——实测选中行底色会让状态色掉到 4.0:1。`tests/test_theme_contrast.py`
+按三种底色分别验，并检查状态色两两可区分、不与交互主色撞色
+（撞色会让"运行中"文字看起来像可点的链接）。
 
 ## 派发数量
 
