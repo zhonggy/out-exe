@@ -74,6 +74,28 @@ def copy_default_config() -> bool:
     return True
 
 
+def write_version() -> bool:
+    """把版本号写到 EXE 旁的 version.txt。
+
+    ``config/loader.py`` 优先读它，「关于与更新」页与更新检查全靠这个值。
+    源于 OA_VERSION（CI 按 git tag 算出），与安装包 AppVersion 同一个变量，
+    三者不会漂。本地构建时没有该变量，则回退到源码里的常量。
+    """
+    version = os.environ.get("OA_VERSION", "").strip().lstrip("vV")
+    if not version:
+        try:
+            sys.path.insert(0, str(ROOT))
+            from config.loader import _FALLBACK_VERSION
+
+            version = _FALLBACK_VERSION
+        except Exception:
+            version = "0.0.0-dev"
+    target = DIST_APP / "version.txt"
+    target.write_text(version + "\n", encoding="utf-8")
+    log(f"[copy] version.txt = {version}")
+    return True
+
+
 def copy_docs() -> None:
     """随包放一份说明，用户能找到数据目录和常见问题。"""
     readme = DIST_APP / "使用说明.txt"
@@ -197,6 +219,7 @@ def main() -> int:
             return 1
         if not copy_default_config():
             return 1
+        write_version()
         copy_docs()
 
     return 0 if verify(require_both_kernels=not args.allow_single_kernel) else 1

@@ -5,6 +5,7 @@
 业务逻辑一律不在此处实现。
 """
 
+from .about_view import AboutView
 from .accounts_view import AccountsView
 from .browser_view import BrowserView
 from .dashboard import DashboardView
@@ -15,6 +16,7 @@ from .settings_view import SettingsView
 from .tasks_view import TasksView
 
 __all__ = [
+    "AboutView",
     "AccountsView",
     "BrowserView",
     "DashboardView",

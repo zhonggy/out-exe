@@ -16,6 +16,9 @@
 - 用户数据在 `%APPDATA%\OutlookAutomation`（卸载默认保留，升级不覆盖）
 - 首次运行会被 SmartScreen 拦（未做代码签名），点「更多信息」→「仍要运行」
 
+升级：开「关于与更新」页 → 检查更新 → 下载更新 → 立即重启并更新。
+覆盖安装不会动用户数据（账号、数据库、登录态 Profile）。
+
 ## 给开发者
 
 ```bash
@@ -104,7 +107,7 @@ OutlookAutomation/
 │   │   ├── worker_proc.py   执行进程生命周期 + argv 构造
 │   │   ├── ipc.py           命名管道 IPC（行分隔 JSON）
 │   │   └── tasks.py         QThreadPool 后台任务
-│   └── views/               8 个页面（仪表盘/账号/任务/日志/浏览器/Profile/代理/设置）
+│   └── views/               9 个页面（仪表盘/账号/任务/日志/浏览器/Profile/代理/设置）
 │       ├── widgets.py       通用组件 + 按字体计算尺寸的构造器
 │       └── flow_layout.py   自动换行的工具栏布局
 ├── config/
@@ -136,6 +139,7 @@ OutlookAutomation/
 │   ├── provider.py          代理配置解析 + IP 信息查询
 │   ├── manager.py           加权选择 + IP 表现追踪 + 惩罚
 │   └── resin.py             Resin 外部粘性代理池
+├── updater/manager.py       GitHub Releases 版本检查 + 安装包下载
 ├── browser/kernel.py        Chromium 内核定位（打包/开发两种布局）
 ├── logger/logger.py         控制台 + 文件轮转 + 内存缓冲 + 可插拔 sink
 ├── scripts/
@@ -236,6 +240,28 @@ set OA_SYSTEM__MAX_WORKERS=5
 - `system.max_workers` 并发线程数（默认 1），每个线程独占一个浏览器实例。
   调高能提速，但内存与 CPU 占用同比上升，且同时打开多个浏览器更容易被
   目标站点识别为异常流量。上限 16
+- `update.repo` 发布仓库（默认 `zhonggy/out-exe`）。自建分发渠道时改这里，
+  「关于与更新」页的检查与下载都跟着走
+- `update.include_prerelease` 是否把预发布版当作新版本（默认 false）
+
+## 版本号
+
+三处永远同源，都来自 git tag：
+
+```
+git tag v1.3.0
+  → CI "Resolve version" 算出 OA_VERSION=1.3.0
+      → assemble_dist.py 写 dist/OutlookAutomation/version.txt
+          → config/loader.py 读它 → APP_VERSION → 「关于」页、窗口标题、--version
+      → installer.iss 的 AppVersion（控制面板里显示的版本）
+```
+
+CI 里有一步 `Verify version file` 会比对 version.txt 与 tag，不一致就断构建。
+源码模式跑时没有 version.txt，回退到 `config/loader.py` 的 `_FALLBACK_VERSION`
+—— 发新版时这个常量也要跟着改。
+
+只推 main 不会产生新 Release：Release 那一步带 `if: startsWith(github.ref, 'refs/tags/v')`，
+普通 push 只会得到 `0.0.0-build<run>` 的构建产物。
 
 ## 安全说明
 
@@ -262,7 +288,7 @@ GUI 与执行进程之间走本机命名管道（Windows `AF_PIPE` / POSIX Unix 
 ## 测试
 
 ```bash
-python -m pytest tests -q                       # 58 passed，不启动浏览器
+python -m pytest tests -q                       # 95 passed，不启动浏览器
 QT_QPA_PLATFORM=offscreen python tests/smoke_gui.py   # GUI 冒烟
 python tests/smoke_ipc.py                       # IPC 端到端冒烟
 ```
@@ -278,13 +304,14 @@ python tests/smoke_feedback.py      # 每个操作按钮都必须有可见反馈
 python tests/smoke_proxy_ui.py      # 代理页保存/测试的完整交互
 python tests/smoke_list_refresh.py  # 数据变更后列表正确刷新
 python tests/smoke_account_check.py # 账号页勾选：筛选 → 全选 → 批量删除
+python tests/smoke_update.py        # 更新页：版本比较 + 检查/下载/安装状态机
 python tests/smoke_ui_metrics.py    # 行高/字体度量、高 DPI 缩放
 python tests/smoke_ui_geometry.py   # 逐控件几何：文字是否放得下
 ```
 
 冒烟测试覆盖：
 
-- **smoke_gui** — 8 个页面构造与切换、快照字段完整性、
+- **smoke_gui** — 9 个页面构造与切换、快照字段完整性、
   后台任务回调不因 GC 丢失（曾导致所有操作静默无提示）
 - **smoke_ipc** — 跨进程真链路（命名管道、logger sink 推送、
   含换行日志不破坏分帧、上下线消息）
@@ -299,6 +326,9 @@ python tests/smoke_ui_geometry.py   # 逐控件几何：文字是否放得下
   同样是防回归测试，回退修复后它报出 6 项失败
 - **smoke_account_check** — 账号页勾选链路：勾选按账号名记忆（刷新/翻页不丢）、
   「全选筛选结果」跨页生效、删除作用于勾选项且不误伤其他状态的账号
+- **smoke_update** — 关于与更新页。GitHub 响应全部本地桩造（CI 不依赖外网，
+  也避开 API 限流），覆盖版本比较边界、四个按钮的状态机、
+  半个安装包不能当成可安装、检查/下载失败后不留死结
 - **smoke_ui_metrics** — 行高与 Label 高度不小于字体实测需求，
   含 100%/125%/150%/175%/200% DPI 缩放；并发线程默认值与派发上限。
   把行高改回写死的 28px，它会在 150% 及以上报失败

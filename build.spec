@@ -88,6 +88,7 @@ hiddenimports += [
     "logger",
     "proxy",
     "task",
+    "updater",
 ]
 
 # requests 在 proxy/ 里是函数内局部 import（延迟加载），顶层拓不到。

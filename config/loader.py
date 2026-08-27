@@ -27,6 +27,10 @@ import yaml
 
 APP_NAME = "OutlookAutomation"
 
+#: 版本号回退值。真实版本由 CI 按 git tag 写入 version.txt（见下）。
+#: 发新版时这里也要跟着改，否则源码模式跑出来的版本号会落后。
+_FALLBACK_VERSION = "1.3.0"
+
 #: 源码所在目录（开发模式的项目根）
 _SOURCE_ROOT = Path(__file__).resolve().parent.parent
 
@@ -73,6 +77,32 @@ def _detect_data_root() -> Path:
 APP_ROOT = _detect_app_root()
 BUNDLE_ROOT = _detect_bundle_root()
 DATA_ROOT = _detect_data_root()
+
+
+def _detect_app_version() -> str:
+    """当前版本号。
+
+    优先级：``OA_VERSION`` 环境变量 > 随包 ``version.txt`` > 源码内回退值。
+
+    version.txt 由 CI 在打包前按 git tag 写入（与安装包的 AppVersion 同源），
+    这样「关于」页显示的版本和 Release 页、安装包属性三者永远一致 ——
+    把版本号硬编码在 py 文件里，靠人工同步迟早会漂。
+    """
+    env = os.environ.get("OA_VERSION", "").strip()
+    if env:
+        return env.lstrip("vV")
+    for candidate in (APP_ROOT / "version.txt", BUNDLE_ROOT / "version.txt"):
+        try:
+            if candidate.is_file():
+                text = candidate.read_text(encoding="utf-8").strip()
+                if text:
+                    return text.lstrip("vV")
+        except OSError:
+            continue
+    return _FALLBACK_VERSION
+
+
+APP_VERSION = _detect_app_version()
 
 #: 向后兼容：旧代码引用的 PROJECT_ROOT 指程序资源根
 PROJECT_ROOT = APP_ROOT
@@ -172,6 +202,13 @@ _DEFAULTS: Dict[str, Any] = {
         "log_view_limit": 500,
         "refresh_interval": 2000,
         "table_page_size": 200,
+    },
+    "update": {
+        # 发布仓库：Release 资产从这里取
+        "repo": "zhonggy/out-exe",
+        "asset_name": "OutlookAutomation-Setup.exe",
+        "include_prerelease": False,
+        "timeout": 15,
     },
 }
 

@@ -136,6 +136,13 @@ class KeyValueRow(QWidget):
         else:
             self._value.setText(self._full_text)
 
+    def key_text(self) -> str:
+        return self._key.text()
+
+    def value_text(self) -> str:
+        """未省略的完整值。省略号版本只适合显示，复制/导出要用这个。"""
+        return self._full_text
+
     def _apply_elide(self) -> None:
         from PySide6.QtGui import QFontMetrics
 

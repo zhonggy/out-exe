@@ -29,7 +29,7 @@ from typing import Optional
 
 from account import describe, get_account_manager
 from browser import get_profile_manager
-from config import load_config
+from config import APP_VERSION, load_config
 from database import get_db
 from logger import get_logger, setup_from_config
 
@@ -386,6 +386,7 @@ def cmd_doctor(args) -> int:
     cfg, _log, db = _bootstrap()
     ok = True
     print(f"Python: {sys.version.split()[0]}")
+    print(f"程序版本: {APP_VERSION}")
     print(f"程序目录: {cfg.root}")
     print(f"数据目录: {cfg.data_root}")
     print(f"配置文件: {cfg.source_path or '(使用内置默认值)'}")
@@ -473,6 +474,11 @@ def build_parser() -> argparse.ArgumentParser:
         description="OutlookAutomation 本地自动化框架",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"OutlookAutomation {APP_VERSION}",
     )
     sub = parser.add_subparsers(dest="command")
 

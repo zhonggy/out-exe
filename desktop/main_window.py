@@ -22,6 +22,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from config import APP_VERSION
+
 from .theme import (
     COLOR_FAIL,
     COLOR_OK,
@@ -31,6 +33,7 @@ from .theme import (
     refit_widget_tree,
 )
 from .views import (
+    AboutView,
     AccountsView,
     BrowserView,
     DashboardView,
@@ -52,6 +55,7 @@ _PAGES: List[Tuple[str, Any]] = [
     ("Profile", ProfilesView),
     ("代理", ProxyView),
     ("设置", SettingsView),
+    ("关于与更新", AboutView),
 ]
 
 
@@ -59,7 +63,7 @@ class MainWindow(QMainWindow):
     def __init__(self, context, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.ctx = context
-        self.setWindowTitle("OutlookAutomation")
+        self.setWindowTitle(f"OutlookAutomation {APP_VERSION}")
         self.resize(1280, 820)
         self.setMinimumSize(1024, 680)
 

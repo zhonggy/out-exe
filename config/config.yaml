@@ -75,3 +75,9 @@ scheduler:
     #   flow: login
     #   cron: "0 3 * * *"
     #   accounts: "all"
+
+update:
+  repo: "zhonggy/out-exe"                    # GitHub 仓库，Release 从这里取
+  asset_name: "OutlookAutomation-Setup.exe"  # 要下载的资产名
+  include_prerelease: false                  # 是否把预发布版当作新版本
+  timeout: 15                                # 网络请求超时秒数

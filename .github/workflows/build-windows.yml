@@ -98,6 +98,12 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           OA_DATA_DIR: ${{ runner.temp }}\oa-check-data
 
+      - name: Update page smoke test
+        run: python tests/smoke_update.py
+        env:
+          QT_QPA_PLATFORM: offscreen
+          OA_DATA_DIR: ${{ runner.temp }}\oa-update-data
+
       - name: UI metrics smoke test
         run: python tests/smoke_ui_metrics.py
         env:
@@ -161,11 +167,27 @@ jobs:
         run: python scripts/prepare_chromium.py --report
 
       # ---------- 打包 ----------
+      # 版本号必须在打包前算好：assemble_dist 要把它写进 version.txt，
+      # 「关于与更新」页与安装包 AppVersion 都读同一个值。
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like "refs/tags/v*") {
+            $v = $env:GITHUB_REF -replace "^refs/tags/v",""
+          } else {
+            $v = "0.0.0-build$env:GITHUB_RUN_NUMBER"
+          }
+          Write-Host "version=$v"
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
       - name: PyInstaller
         run: pyinstaller --noconfirm --clean build.spec
 
       - name: Assemble dist
         shell: pwsh
+        env:
+          OA_VERSION: ${{ steps.version.outputs.version }}
         run: |
           # 默认要求两个内核都在（选双内核就是为了有退路）。
           # skip_kernels 是纯链路验证模式，产物本就不可用，放宽校验。
@@ -174,6 +196,16 @@ jobs:
           } else {
             python scripts/assemble_dist.py --force
           }
+
+      - name: Verify version file
+        shell: pwsh
+        run: |
+          $f = "dist\OutlookAutomation\version.txt"
+          if (-not (Test-Path $f)) { throw "version.txt missing in dist" }
+          $v = (Get-Content $f -Raw).Trim()
+          $expected = "${{ steps.version.outputs.version }}"
+          Write-Host "version.txt = $v (expected $expected)"
+          if ($v -ne $expected) { throw "version.txt mismatch: $v != $expected" }
 
       - name: Verify frozen executable
         shell: pwsh
@@ -238,18 +270,6 @@ jobs:
           $node = Get-ChildItem -Path "dist\OutlookAutomation" -Recurse -Filter "node.exe" -ErrorAction SilentlyContinue
           if (-not $node) { throw "patchright driver node.exe missing in dist" }
           Write-Host "node driver: $($node[0].FullName)"
-
-      - name: Resolve version
-        id: version
-        shell: pwsh
-        run: |
-          if ($env:GITHUB_REF -like "refs/tags/v*") {
-            $v = $env:GITHUB_REF -replace "^refs/tags/v",""
-          } else {
-            $v = "0.0.0-build$env:GITHUB_RUN_NUMBER"
-          }
-          Write-Host "version=$v"
-          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Build installer
         shell: pwsh

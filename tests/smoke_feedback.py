@@ -63,6 +63,7 @@ def _install_recorders() -> None:
         "desktop.views.proxy_view",
         "desktop.views.browser_view",
         "desktop.views.settings_view",
+        "desktop.views.about_view",
     ):
         __import__(mod)
         module = sys.modules[mod]
@@ -191,6 +192,29 @@ def main() -> int:
     settings = SettingsView(ctx)
     drain(3.0)
     check("设置-保存", settings._on_save)
+
+    # ---------- 关于与更新页 ----------
+    # 检查更新与打开发布页都会碰外部世界（GitHub / 系统浏览器），
+    # 这里只桩掉这两处，其余走真实代码路径。
+    import desktop.views.about_view as about_module
+    from desktop.views.about_view import AboutView
+
+    about = AboutView(ctx)
+    drain(3.0)
+    about.updater._get_json = lambda url: {
+        "tag_name": "v0.0.1",
+        "name": "stub",
+        "body": "stub",
+        "published_at": "2026-01-01T00:00:00Z",
+        "html_url": "https://example.invalid",
+        "prerelease": False,
+        "draft": False,
+        "assets": [],
+    }
+    check("关于-检查更新", about._on_check)
+    about.updater.open_release_page = lambda: "https://example.invalid/releases"
+    check("关于-打开发布页", about._on_release_page)
+    check("关于-复制信息", about._on_copy_info)
 
     ctx.shutdown()
 

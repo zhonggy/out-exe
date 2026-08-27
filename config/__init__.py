@@ -3,6 +3,7 @@
 from .loader import (
     APP_NAME,
     APP_ROOT,
+    APP_VERSION,
     BUNDLE_ROOT,
     Config,
     DATA_ROOT,
@@ -17,6 +18,7 @@ from .loader import (
 __all__ = [
     "APP_NAME",
     "APP_ROOT",
+    "APP_VERSION",
     "BUNDLE_ROOT",
     "Config",
     "DATA_ROOT",
