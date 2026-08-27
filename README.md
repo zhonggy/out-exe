@@ -277,6 +277,7 @@ SQLite 全部表 CRUD、账号解析与导入、任务优先级队列与恢复�
 python tests/smoke_feedback.py      # 每个操作按钮都必须有可见反馈
 python tests/smoke_proxy_ui.py      # 代理页保存/测试的完整交互
 python tests/smoke_list_refresh.py  # 数据变更后列表正确刷新
+python tests/smoke_account_check.py # 账号页勾选：筛选 → 全选 → 批量删除
 python tests/smoke_ui_metrics.py    # 行高/字体度量、高 DPI 缩放
 python tests/smoke_ui_geometry.py   # 逐控件几何：文字是否放得下
 ```
@@ -296,6 +297,8 @@ python tests/smoke_ui_geometry.py   # 逐控件几何：文字是否放得下
 - **smoke_list_refresh** — 数据变更后列表必须跟着变：过时响应被丢弃、
   导入时残留的筛选/搜索/翻页被重置、越界页自动回第一页。
   同样是防回归测试，回退修复后它报出 6 项失败
+- **smoke_account_check** — 账号页勾选链路：勾选按账号名记忆（刷新/翻页不丢）、
+  「全选筛选结果」跨页生效、删除作用于勾选项且不误伤其他状态的账号
 - **smoke_ui_metrics** — 行高与 Label 高度不小于字体实测需求，
   含 100%/125%/150%/175%/200% DPI 缩放；并发线程默认值与派发上限。
   把行高改回写死的 28px，它会在 150% 及以上报失败

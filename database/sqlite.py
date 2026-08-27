@@ -234,6 +234,36 @@ class Database:
     def delete_account(self, account: str) -> None:
         self._write("DELETE FROM accounts WHERE account=?", (account,))
 
+    def delete_accounts(self, accounts: Iterable[str]) -> int:
+        """批量删除。一次事务提交——逐个 delete_account 会每条 commit，
+        勾选几千行时肉眼可见地卡。"""
+        names = [(a,) for a in accounts if a]
+        if not names:
+            return 0
+        with self._lock:
+            cur = self._conn.executemany("DELETE FROM accounts WHERE account=?", names)
+            self._conn.commit()
+        return cur.rowcount if cur.rowcount and cur.rowcount > 0 else len(names)
+
+    def update_accounts_status(
+        self, accounts: Iterable[str], status: str, note: Optional[str] = None
+    ) -> int:
+        """批量改状态（批量重置用）。note 传空串清除备注。"""
+        names = [a for a in accounts if a]
+        if not names:
+            return 0
+        now = time.time()
+        if note is None:
+            sql = "UPDATE accounts SET status=?, updated_at=? WHERE account=?"
+            params = [(status, now, name) for name in names]
+        else:
+            sql = "UPDATE accounts SET status=?, note=?, updated_at=? WHERE account=?"
+            params = [(status, note, now, name) for name in names]
+        with self._lock:
+            cur = self._conn.executemany(sql, params)
+            self._conn.commit()
+        return cur.rowcount if cur.rowcount and cur.rowcount > 0 else len(names)
+
     # ---------- tasks ----------
     def create_task(self, task: Task) -> int:
         now = time.time()

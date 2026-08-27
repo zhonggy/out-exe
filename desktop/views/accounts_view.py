@@ -7,6 +7,10 @@ QTableWidget 逐格创建 item 会明显卡顿。
 batch_delete / batch_reset / reset / export。
 
 密码永不显示：模型只读 ``to_dict()``（默认 mask_password=True）。
+
+第一列是勾选框：勾选状态按「账号名」记住，因此翻页、刷新都不会丢，
+「全选」也能跨页勾选当前筛选下的全部账号（典型用法：筛出「登录成功」
+→ 全选 → 删除）。
 """
 
 from __future__ import annotations
@@ -17,6 +21,7 @@ from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -35,7 +40,7 @@ from account import describe
 from database import AccountStatus
 
 from ..bridge.tasks import run_async
-from ..theme import account_status_color, apply_row_height, fit_input
+from ..theme import account_status_color, apply_row_height, fit_checkbox, fit_input
 from .widgets import (
     button,
     confirm,
@@ -54,10 +59,25 @@ _STATUS_FILTERS = [("全部", "")] + [
 ]
 
 
+#: 勾选列的内部 key
+_CHECK_KEY = "__check__"
+
+#: 勾选列宽度（指示器 15px + 两侧留白）
+_CHECK_COL_WIDTH = 38
+
+
 class AccountTableModel(QAbstractTableModel):
-    """账号表格模型。数据来自 ``AccountManager.list()``。"""
+    """账号表格模型。数据来自 ``AccountManager.list()``。
+
+    第 0 列是勾选框。勾选集合存的是账号名而不是行号 —— 行号会随翻页、
+    筛选、刷新失效，账号名不会。
+    """
+
+    #: 勾选数量变化（视图据此更新按钮文字与提示）
+    checked_changed = Signal()
 
     COLUMNS = [
+        ("", _CHECK_KEY),
         ("账号", "account"),
         ("状态", "status"),
         ("备注", "note"),
@@ -70,6 +90,9 @@ class AccountTableModel(QAbstractTableModel):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._rows: List[Dict[str, Any]] = []
+        self._checked: set = set()
+        #: 刚由 setData 处理过勾选的行号，用于整单元格点击去重
+        self._just_toggled_row: Optional[int] = None
 
     # ---------- Qt 接口 ----------
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
@@ -79,15 +102,36 @@ class AccountTableModel(QAbstractTableModel):
         return 0 if parent.isValid() else len(self.COLUMNS)
 
     def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole):
-        if role != Qt.DisplayRole or orientation != Qt.Horizontal:
+        if orientation != Qt.Horizontal:
             return None
-        return self.COLUMNS[section][0]
+        key = self.COLUMNS[section][1]
+        if role == Qt.DisplayRole:
+            return self.COLUMNS[section][0]
+        if role == Qt.ToolTipRole and key == _CHECK_KEY:
+            return "点击表头可全选/取消本页"
+        return None
+
+    def flags(self, index: QModelIndex) -> Qt.ItemFlags:
+        if not index.isValid():
+            return Qt.NoItemFlags
+        base = Qt.ItemIsEnabled | Qt.ItemIsSelectable
+        if self.COLUMNS[index.column()][1] == _CHECK_KEY:
+            return base | Qt.ItemIsUserCheckable
+        return base
 
     def data(self, index: QModelIndex, role: int = Qt.DisplayRole):
         if not index.isValid():
             return None
         row = self._rows[index.row()]
         key = self.COLUMNS[index.column()][1]
+
+        if key == _CHECK_KEY:
+            if role == Qt.CheckStateRole:
+                account = str(row.get("account") or "")
+                return Qt.Checked if account in self._checked else Qt.Unchecked
+            if role == Qt.TextAlignmentRole:
+                return int(Qt.AlignCenter)
+            return None
 
         if role == Qt.DisplayRole:
             value = row.get(key)
@@ -111,11 +155,108 @@ class AccountTableModel(QAbstractTableModel):
 
         return None
 
+    def setData(self, index: QModelIndex, value: Any, role: int = Qt.EditRole) -> bool:
+        if (
+            not index.isValid()
+            or role != Qt.CheckStateRole
+            or self.COLUMNS[index.column()][1] != _CHECK_KEY
+        ):
+            return False
+        account = self.account_at(index.row())
+        if not account:
+            return False
+        # Qt 可能传 int 或 Qt.CheckState，统一比较
+        checked = Qt.CheckState(value) == Qt.Checked if value is not None else False
+        self._apply_check(account, checked)
+        # 标记本行刚由 Qt 处理过指示器点击，view 的 clicked 回调就不再重复翻转
+        self._just_toggled_row = index.row()
+        self.dataChanged.emit(index, index, [Qt.CheckStateRole])
+        self.checked_changed.emit()
+        return True
+
     # ---------- 数据 ----------
     def set_rows(self, rows: List[Dict[str, Any]]) -> None:
         self.beginResetModel()
         self._rows = rows
         self.endResetModel()
+        # 上一页勾选的账号可能已不在本页，勾选数没变但表头三态要重算
+        self.checked_changed.emit()
+
+    # ---------- 勾选 ----------
+    def _apply_check(self, account: str, checked: bool) -> None:
+        if checked:
+            self._checked.add(account)
+        else:
+            self._checked.discard(account)
+
+    def toggle(self, row: int) -> None:
+        """翻转某行勾选。点击勾选列的任意位置都会走这里。"""
+        account = self.account_at(row)
+        if not account:
+            return
+        self._apply_check(account, account not in self._checked)
+        index = self.index(row, 0)
+        self.dataChanged.emit(index, index, [Qt.CheckStateRole])
+        self.checked_changed.emit()
+
+    def consume_recent_toggle(self, row: int) -> bool:
+        """该行是否刚由 Qt 的指示器点击处理过（一次性消耗）。
+
+        没有这个去重，直接点到小方框上会先走 setData、再走 view 的 clicked，
+        两次翻转互相抵消，表现为「点勾选框没反应」。
+        """
+        if self._just_toggled_row == row:
+            self._just_toggled_row = None
+            return True
+        self._just_toggled_row = None
+        return False
+
+    def set_checked(self, accounts: List[str], checked: bool = True) -> None:
+        for account in accounts:
+            if account:
+                self._apply_check(account, checked)
+        self._notify_all_rows()
+
+    def set_page_checked(self, checked: bool) -> None:
+        for row in self._rows:
+            account = str(row.get("account") or "")
+            if account:
+                self._apply_check(account, checked)
+        self._notify_all_rows()
+
+    def clear_checked(self) -> None:
+        if not self._checked:
+            return
+        self._checked.clear()
+        self._notify_all_rows()
+
+    def checked_accounts(self) -> List[str]:
+        return sorted(self._checked)
+
+    def checked_count(self) -> int:
+        return len(self._checked)
+
+    def page_check_state(self) -> Qt.CheckState:
+        """本页整体勾选状态，用于工具栏「全选」三态显示。"""
+        accounts = [str(r.get("account") or "") for r in self._rows]
+        accounts = [a for a in accounts if a]
+        if not accounts:
+            return Qt.Unchecked
+        hits = sum(1 for a in accounts if a in self._checked)
+        if hits == 0:
+            return Qt.Unchecked
+        if hits == len(accounts):
+            return Qt.Checked
+        return Qt.PartiallyChecked
+
+    def _notify_all_rows(self) -> None:
+        if self._rows:
+            self.dataChanged.emit(
+                self.index(0, 0),
+                self.index(len(self._rows) - 1, 0),
+                [Qt.CheckStateRole],
+            )
+        self.checked_changed.emit()
 
     def account_at(self, row: int) -> str:
         if 0 <= row < len(self._rows):
@@ -236,6 +377,21 @@ class AccountsView(QWidget):
             self.status_filter.addItem(text, value)
         self.status_filter.currentIndexChanged.connect(self._on_search)
 
+        # 勾选相关：本页全选（三态）+ 跨页全选当前筛选结果 + 清空勾选
+        self.check_all = QCheckBox("全选本页")
+        self.check_all.setTristate(True)
+        self.check_all.setToolTip("勾选/取消当前页的全部账号")
+        fit_checkbox(self.check_all)
+        self.check_all.clicked.connect(self._on_check_all_clicked)
+
+        self.btn_select_matched = button(
+            "全选筛选结果",
+            tooltip="按当前状态筛选跨页勾选全部账号，例如筛「登录成功」后一键全选",
+        )
+        self.btn_clear_checked = button("清空勾选")
+        self.btn_select_matched.clicked.connect(self._on_select_matched)
+        self.btn_clear_checked.clicked.connect(self._on_clear_checked)
+
         self.btn_import = button("批量导入", "primary")
         self.btn_import_file = button("从文件导入", tooltip="读取配置中的 accounts.txt")
         self.btn_add = button("添加")
@@ -256,6 +412,9 @@ class AccountsView(QWidget):
             toolbar(
                 self.search,
                 self.status_filter,
+                self.check_all,
+                self.btn_select_matched,
+                self.btn_clear_checked,
                 self.btn_import,
                 self.btn_import_file,
                 self.btn_add,
@@ -268,6 +427,7 @@ class AccountsView(QWidget):
         )
 
         self.model = AccountTableModel(self)
+        self.model.checked_changed.connect(self._on_checked_changed)
         self.table = QTableView()
         self.table.setModel(self.model)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -275,13 +435,23 @@ class AccountsView(QWidget):
         self.table.setAlternatingRowColors(True)
         self.table.setSortingEnabled(False)
         self.table.verticalHeader().setVisible(False)
+        # 点勾选列的任意位置都能切换（不必精准命中 15px 的小方框）
+        self.table.clicked.connect(self._on_cell_clicked)
         # 行高按运行时字体实测，不写死——中文字体 + 高 DPI 缩放下 28px 会裁字
         apply_row_height(self.table)
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.Stretch)
-        for col in range(1, len(AccountTableModel.COLUMNS)):
+        header.setSectionResizeMode(0, QHeaderView.Fixed)
+        header.resizeSection(0, _CHECK_COL_WIDTH)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        for col in range(2, len(AccountTableModel.COLUMNS)):
             header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
+        # 点表头勾选列 = 本页全选/取消
+        header.sectionClicked.connect(self._on_header_clicked)
         layout.addWidget(self.table, 1)
+
+        self.checked_label = QLabel("")
+        self.checked_label.setProperty("role", "hint")
+        layout.addWidget(self.checked_label)
 
         self.btn_prev = button("上一页")
         self.btn_next = button("下一页")
@@ -290,6 +460,8 @@ class AccountsView(QWidget):
         self.btn_prev.clicked.connect(lambda: self._page(-1))
         self.btn_next.clicked.connect(lambda: self._page(1))
         layout.addWidget(toolbar(self.page_label, self.btn_prev, self.btn_next, stretch_at=0))
+
+        self._on_checked_changed()
 
     # ---------- 查询 ----------
     def _current_status(self) -> str:
@@ -367,6 +539,86 @@ class AccountsView(QWidget):
         rows = {i.row() for i in self.table.selectionModel().selectedRows()}
         return [self.model.account_at(r) for r in sorted(rows) if self.model.account_at(r)]
 
+    def checked_accounts(self) -> List[str]:
+        return self.model.checked_accounts()
+
+    def target_accounts(self) -> List[str]:
+        """批量操作的作用对象。
+
+        勾选优先于高亮选中：勾选是显式、可跨页保持的意图，而行高亮很容易
+        被一次误点击重置。两者都空时才让调用方提示用户。
+        """
+        return self.checked_accounts() or self.selected_accounts()
+
+    # ---------- 勾选交互 ----------
+    def _on_cell_clicked(self, index) -> None:
+        """点勾选列的任意位置切换勾选。
+
+        指示器只有 15px，要求用户精准命中才能勾上很难用；但 Qt 已经处理了
+        直接点指示器的情况（走 setData），这里需要去重，否则两次翻转互相抵消。
+        """
+        if not index.isValid() or index.column() != 0:
+            return
+        if self.model.consume_recent_toggle(index.row()):
+            return
+        self.model.toggle(index.row())
+
+    def _on_header_clicked(self, section: int) -> None:
+        if section != 0:
+            return
+        self.model.set_page_checked(self.model.page_check_state() != Qt.Checked)
+
+    def _on_check_all_clicked(self, _checked: bool = False) -> None:
+        # 三态勾选框点一下的下一态不直观，这里直接按「本页是不是已全选」判定
+        self.model.set_page_checked(self.model.page_check_state() != Qt.Checked)
+
+    def _on_clear_checked(self) -> None:
+        self.model.clear_checked()
+
+    def _on_select_matched(self) -> None:
+        """跨页勾选当前筛选/搜索匹配的全部账号。
+
+        需要它是因为列表默认每页 200 行，而「登录成功」可能有几千个 ——
+        只能全选本页的话用户要翻几十页。
+        """
+        status = self._current_status()
+        keyword = self.search.text().strip().lower()
+
+        def work():
+            if status:
+                names = self.ctx.am.accounts_with_status(status)
+            else:
+                names = [a.account for a in self.ctx.am.list(limit=1000000)]
+            if keyword:
+                names = [n for n in names if keyword in n.lower()]
+            return names
+
+        def done(names: List[str]) -> None:
+            self.model.set_checked(names, True)
+            label = self.status_filter.currentText()
+            scope = f"【{label}】" if status else "全部"
+            notify(self, f"已勾选 {scope} {len(names)} 个账号")
+
+        run_async(work, on_result=done, on_error=lambda msg: error(self, "全选失败", msg))
+
+    def _on_checked_changed(self) -> None:
+        """勾选变化后同步表头三态、提示文字与按钮文案。"""
+        count = self.model.checked_count()
+        state = self.model.page_check_state()
+        self.check_all.blockSignals(True)
+        self.check_all.setCheckState(state)
+        self.check_all.blockSignals(False)
+        self.btn_clear_checked.setEnabled(count > 0)
+
+        if count:
+            self.checked_label.setText(f"已勾选 {count} 个账号（删除/重置优先作用于勾选项）")
+            self.btn_delete.setText(f"删除勾选 ({count})")
+            self.btn_reset.setText(f"重置勾选 ({count})")
+        else:
+            self.checked_label.setText("未勾选：删除/重置作用于表格中高亮的行")
+            self.btn_delete.setText("删除")
+            self.btn_reset.setText("重置状态")
+
     # ---------- 操作 ----------
     def _on_import(self) -> None:
         separator = str(self.ctx.cfg.get("system.account_separator", "----"))
@@ -426,9 +678,9 @@ class AccountsView(QWidget):
         )
 
     def _on_reset(self) -> None:
-        accounts = self.selected_accounts()
+        accounts = self.target_accounts()
         if not accounts:
-            info(self, "重置状态", "请先选中要重置的账号")
+            info(self, "重置状态", "请先勾选（或选中）要重置的账号")
             return
         if not confirm(
             self,
@@ -438,39 +690,32 @@ class AccountsView(QWidget):
         ):
             return
 
-        def work():
-            for account in accounts:
-                self.ctx.am.reset_status(account)
-            return len(accounts)
-
         run_async(
-            work,
-            on_result=lambda n: self._after_change(f"已重置 {n} 个账号"),
+            lambda: self.ctx.am.reset_many(accounts),
+            on_result=lambda n: self._after_change(f"已重置 {n} 个账号", clear_checked=True),
             on_error=lambda msg: error(self, "重置失败", msg),
         )
 
     def _on_delete(self) -> None:
-        accounts = self.selected_accounts()
+        accounts = self.target_accounts()
         if not accounts:
-            info(self, "删除账号", "请先选中要删除的账号")
+            info(self, "删除账号", "请先勾选（或选中）要删除的账号")
             return
+        preview = "、".join(accounts[:3])
+        if len(accounts) > 3:
+            preview += f" 等 {len(accounts)} 个"
         if not confirm(
             self,
             "删除账号",
-            f"确认删除 {len(accounts)} 个账号？\n\n"
+            f"确认删除 {len(accounts)} 个账号？\n\n{preview}\n\n"
             "此操作不可恢复，账号的历史任务记录会保留但失去关联。",
             danger=True,
         ):
             return
 
-        def work():
-            for account in accounts:
-                self.ctx.am.remove(account)
-            return len(accounts)
-
         run_async(
-            work,
-            on_result=lambda n: self._after_change(f"已删除 {n} 个账号"),
+            lambda: self.ctx.am.remove_many(accounts),
+            on_result=lambda n: self._after_change(f"已删除 {n} 个账号", clear_checked=True),
             on_error=lambda msg: error(self, "删除失败", msg),
         )
 
@@ -518,7 +763,10 @@ class AccountsView(QWidget):
         self.data_changed.emit()
         notify(self, message)
 
-    def _after_change(self, message: str) -> None:
+    def _after_change(self, message: str, clear_checked: bool = False) -> None:
+        # 已删除/已重置的账号再继续勾着没意义，且会让计数牌子误导用户
+        if clear_checked:
+            self.model.clear_checked()
         self.refresh()
         self.data_changed.emit()
         notify(self, message)

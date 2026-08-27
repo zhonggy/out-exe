@@ -95,6 +95,20 @@ class AccountManager:
     def remove(self, account: str) -> None:
         self.db.delete_account(account)
 
+    def remove_many(self, accounts: Iterable[str]) -> int:
+        """批量删除，返回删除条数。"""
+        names = [a for a in accounts if a]
+        if not names:
+            return 0
+        count = self.db.delete_accounts(names)
+        if self.log:
+            self.log.ok("account_delete", f"批量删除 {count} 个账号")
+        return count
+
+    def accounts_with_status(self, status: str) -> List[str]:
+        """某状态下的全部账号名（不分页），供界面批量勾选使用。"""
+        return [a.account for a in self.db.list_accounts(status=status, limit=1000000)]
+
     # ---------- 分配 ----------
     def claim_batch(
         self, limit: int = 10, statuses: Optional[List[str]] = None
@@ -145,6 +159,15 @@ class AccountManager:
     def reset_status(self, account: str, status: str = AccountStatus.NEW.value) -> None:
         # 传空串清除上次失败留下的备注
         self.db.update_account_status(account, status, note="")
+
+    def reset_many(
+        self, accounts: Iterable[str], status: str = AccountStatus.NEW.value
+    ) -> int:
+        """批量重置状态，返回条数。"""
+        names = [a for a in accounts if a]
+        if not names:
+            return 0
+        return self.db.update_accounts_status(names, status, note="")
 
     def reset_non_terminal(self) -> int:
         """把 PENDING/RUNNING 等中间态账号打回 NEW（进程异常退出后恢复用）。"""

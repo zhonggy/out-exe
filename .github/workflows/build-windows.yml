@@ -92,6 +92,12 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           OA_DATA_DIR: ${{ runner.temp }}\oa-list-data
 
+      - name: Account checkbox smoke test
+        run: python tests/smoke_account_check.py
+        env:
+          QT_QPA_PLATFORM: offscreen
+          OA_DATA_DIR: ${{ runner.temp }}\oa-check-data
+
       - name: UI metrics smoke test
         run: python tests/smoke_ui_metrics.py
         env:
