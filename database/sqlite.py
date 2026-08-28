@@ -355,10 +355,21 @@ class Database:
         self._write("DELETE FROM checkpoints WHERE task_id=?", (task_id,))
 
     def clear_tasks(self, statuses: Optional[List[str]] = None) -> int:
+        """删除任务记录。注意是 DELETE 而不是标记取消。
+
+        断点要跟着删：checkpoints 按 task_id 关联，任务行没了而断点还在，
+        就成了永不被读取的孤儿数据 —— 反复派发/清空几轮后能撑大数据库。
+        """
         if statuses:
             marks = ",".join("?" * len(statuses))
+            self._write(
+                f"DELETE FROM checkpoints WHERE task_id IN "
+                f"(SELECT id FROM tasks WHERE status IN ({marks}))",
+                statuses,
+            )
             cur = self._write(f"DELETE FROM tasks WHERE status IN ({marks})", statuses)
         else:
+            self._write("DELETE FROM checkpoints", ())
             cur = self._write("DELETE FROM tasks", ())
         return cur.rowcount or 0
 

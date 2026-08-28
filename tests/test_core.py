@@ -256,6 +256,41 @@ def test_profile_and_checkpoint(db):
     assert len(db.list_checkpoints(tid)) == 2
 
 
+def test_clear_tasks_cascades_checkpoints(db):
+    """删任务必须连带断点。
+
+    checkpoints 按 task_id 关联，任务行没了而断点还在就成了孤儿数据，
+    永不被读取也不被清理，反复派发/停止几轮后能撑大数据库。
+    """
+    queued = db.create_task(Task(account="q@e.com", status=TaskStatus.QUEUED.value))
+    done = db.create_task(Task(account="d@e.com", status=TaskStatus.COMPLETED.value))
+    for tid in (queued, done):
+        db.save_checkpoint(Checkpoint(task_id=tid, stage=FlowStage.LOGIN_PAGE.value))
+
+    # 按状态清：只动 QUEUED，已完成的任务与它的断点都要留着
+    assert db.clear_tasks(statuses=[TaskStatus.QUEUED.value]) == 1
+    assert db.get_task(queued) is None
+    assert db.list_checkpoints(queued) == []
+    assert db.get_task(done) is not None
+    assert len(db.list_checkpoints(done)) == 1
+
+    # 全清：任务与断点一起消失
+    assert db.clear_tasks() == 1
+    assert db.list_tasks(limit=10) == []
+    assert db.list_checkpoints(done) == []
+
+
+def test_clear_tasks_keeps_accounts(db):
+    """清任务不能牽连账号状态 —— 已跑出的登录结果得保留。"""
+    db.upsert_account("keep@e.com", "pw")
+    db.update_account_status("keep@e.com", AccountStatus.OK.value)
+    db.create_task(Task(account="keep@e.com", status=TaskStatus.COMPLETED.value))
+
+    db.clear_tasks()
+
+    assert db.get_account("keep@e.com").status == AccountStatus.OK.value
+
+
 def test_events_and_stats(db):
     db.upsert_account("s@e.com", "p")
     tid = db.create_task(Task(account="s@e.com"))

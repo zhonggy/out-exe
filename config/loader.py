@@ -29,7 +29,7 @@ APP_NAME = "OutlookAutomation"
 
 #: 版本号回退值。真实版本由 CI 按 git tag 写入 version.txt（见下）。
 #: 发新版时这里也要跟着改，否则源码模式跑出来的版本号会落后。
-_FALLBACK_VERSION = "1.3.0"
+_FALLBACK_VERSION = "1.4.0"
 
 #: 源码所在目录（开发模式的项目根）
 _SOURCE_ROOT = Path(__file__).resolve().parent.parent

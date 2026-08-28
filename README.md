@@ -249,8 +249,8 @@ set OA_SYSTEM__MAX_WORKERS=5
 三处永远同源，都来自 git tag：
 
 ```
-git tag v1.3.0
-  → CI "Resolve version" 算出 OA_VERSION=1.3.0
+git tag v1.4.0
+  → CI "Resolve version" 算出 OA_VERSION=1.4.0
       → assemble_dist.py 写 dist/OutlookAutomation/version.txt
           → config/loader.py 读它 → APP_VERSION → 「关于」页、窗口标题、--version
       → installer.iss 的 AppVersion（控制面板里显示的版本）
@@ -288,7 +288,7 @@ GUI 与执行进程之间走本机命名管道（Windows `AF_PIPE` / POSIX Unix 
 ## 测试
 
 ```bash
-python -m pytest tests -q                       # 95 passed，不启动浏览器
+python -m pytest tests -q                       # 100 passed，不启动浏览器
 QT_QPA_PLATFORM=offscreen python tests/smoke_gui.py   # GUI 冒烟
 python tests/smoke_ipc.py                       # IPC 端到端冒烟
 ```
@@ -305,6 +305,7 @@ python tests/smoke_proxy_ui.py      # 代理页保存/测试的完整交互
 python tests/smoke_list_refresh.py  # 数据变更后列表正确刷新
 python tests/smoke_account_check.py # 账号页勾选：筛选 → 全选 → 批量删除
 python tests/smoke_update.py        # 更新页：版本比较 + 检查/下载/安装状态机
+python tests/smoke_stop_clear.py    # 停止执行后任务列表清空
 python tests/smoke_ui_metrics.py    # 行高/字体度量、高 DPI 缩放
 python tests/smoke_ui_geometry.py   # 逐控件几何：文字是否放得下
 ```
@@ -329,6 +330,9 @@ python tests/smoke_ui_geometry.py   # 逐控件几何：文字是否放得下
 - **smoke_update** — 关于与更新页。GitHub 响应全部本地桩造（CI 不依赖外网，
   也避开 API 限流），覆盖版本比较边界、四个按钮的状态机、
   半个安装包不能当成可安装、检查/下载失败后不留死结
+- **smoke_stop_clear** — 「停止执行」后任务列表必须清空：先停进程再删记录
+  （顺序颠倒会被执行进程的周期补拉又写回）、断点级联删除、
+  账号状态不被牽连、「清空队列」只删未开始的
 - **smoke_ui_metrics** — 行高与 Label 高度不小于字体实测需求，
   含 100%/125%/150%/175%/200% DPI 缩放；并发线程默认值与派发上限。
   把行高改回写死的 28px，它会在 150% 及以上报失败

@@ -277,7 +277,9 @@ class TasksView(QWidget):
         self.btn_dispatch = button("派发任务", "primary")
         self.btn_cancel = button("取消选中")
         self.btn_delete = button("删除选中", "danger")
-        self.btn_clear = button("清空队列", "danger", tooltip="把队列中未开始的任务标记为已取消")
+        self.btn_clear = button(
+            "清空队列", "danger", tooltip="删除队列中未开始的任务记录"
+        )
         self.btn_refresh = button("刷新")
 
         self.btn_dispatch.clicked.connect(self._on_dispatch)
@@ -333,7 +335,9 @@ class TasksView(QWidget):
         )
 
         self.btn_start = button("开始执行", "primary")
-        self.btn_stop = button("停止执行", "danger")
+        self.btn_stop = button(
+            "停止执行", "danger", tooltip="结束执行进程并清空任务列表"
+        )
         self.btn_restart = button("重启执行进程")
         self.btn_start.clicked.connect(self._on_start)
         self.btn_stop.clicked.connect(self._on_stop)
@@ -361,7 +365,8 @@ class TasksView(QWidget):
         outer.addWidget(
             hint_label(
                 "任务在独立进程中执行，关闭本窗口不会中断任务；"
-                "需要停止请点「停止执行」。"
+                "需要停止请点「停止执行」—— 它会同时清空下方的任务列表，"
+                "但不改动账号状态（已跑出的登录结果保留）。"
             )
         )
         return holder
@@ -444,12 +449,26 @@ class TasksView(QWidget):
         if not confirm(
             self,
             "停止执行",
-            "将结束执行进程并关闭所有浏览器。\n\n"
-            "正在执行的任务会保留断点，下次开始可从断点继续。",
+            "将结束执行进程、关闭所有浏览器，并清空下方任务列表。\n\n"
+            "任务记录与断点会被删除，下次不能从断点继续；\n"
+            "账号本身与已完成的登录结果（账号状态）不受影响。\n\n"
+            "继续？",
+            danger=True,
         ):
             return
+
+        def work():
+            # 先停进程再删记录，顺序不能颠倒：执行进程还活着时它每 2 秒
+            # 会从库里补拉任务，先删会被它又写回一批。
+            result = self.ctx.wpm.stop()
+            removed = self.ctx.db.clear_tasks()
+            if isinstance(result, dict):
+                result = dict(result)
+                result["cleared"] = removed
+            return result
+
         run_async(
-            self.ctx.wpm.stop,
+            work,
             on_result=self._on_control_result,
             on_error=lambda msg: error(self, "停止失败", msg),
         )
@@ -483,9 +502,16 @@ class TasksView(QWidget):
             notify(self, "执行进程已在运行", "warn")
         elif "stopped" in result:
             stopped = result.get("stopped") or []
+            cleared = result.get("cleared")
+            suffix = f"，已清空 {cleared} 条任务" if cleared else "，任务列表已清空"
             if stopped:
                 how = "优雅停止" if result.get("graceful") else "强制结束"
-                notify(self, f"执行进程已{how}（PID {', '.join(map(str, stopped))}）")
+                notify(
+                    self,
+                    f"执行进程已{how}（PID {', '.join(map(str, stopped))}）{suffix}",
+                )
+            elif cleared:
+                notify(self, f"没有正在运行的执行进程{suffix}", "warn")
             else:
                 notify(self, "没有正在运行的执行进程", "warn")
         elif result.get("pid"):
@@ -629,8 +655,8 @@ class TasksView(QWidget):
         if not confirm(
             self,
             "清空队列",
-            "把所有未开始的任务标记为「已取消」。\n\n"
-            "正在执行的任务不受影响。",
+            "将删除所有未开始的任务记录（待执行 / 已创建）。\n\n"
+            "正在执行与已完成的任务不受影响；此操作不可恢复。",
             danger=True,
         ):
             return
@@ -642,7 +668,7 @@ class TasksView(QWidget):
 
         run_async(
             work,
-            on_result=lambda n: self._after_change(f"已取消 {n} 个排队任务"),
+            on_result=lambda n: self._after_change(f"已删除 {n} 条排队任务"),
             on_error=lambda msg: error(self, "清空失败", msg),
         )
 

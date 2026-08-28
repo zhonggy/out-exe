@@ -104,6 +104,12 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           OA_DATA_DIR: ${{ runner.temp }}\oa-update-data
 
+      - name: Stop-and-clear smoke test
+        run: python tests/smoke_stop_clear.py
+        env:
+          QT_QPA_PLATFORM: offscreen
+          OA_DATA_DIR: ${{ runner.temp }}\oa-stopclear-data
+
       - name: UI metrics smoke test
         run: python tests/smoke_ui_metrics.py
         env:
