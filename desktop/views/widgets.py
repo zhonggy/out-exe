@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..theme import TEXT, TEXT_DIM, fit_spinbox, metric_height, text_height
+from ..theme import TEXT, TEXT_DIM, fit_spinbox, metric_height, text_height, text_width
 
 
 def title_label(text: str) -> QLabel:
@@ -94,23 +94,28 @@ class KeyValueRow(QWidget):
 
     ``elide=True`` 用于长路径这类内容：超宽时中间省略并挂 tooltip，比换行成
     三行整齐。默认换行，适合错误信息这类需要读全的内容。
+
+    键列标为 ``role="field"``，由 ``align_form_labels()`` 按本页最宽文字统一
+    宽度 —— 原先写死 128px，而「Profile 目录」在 150% 缩放下已需 134px。
     """
 
     def __init__(self, key: str, value: str = "-", elide: bool = False):
         super().__init__()
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 3, 0, 3)
-        layout.setSpacing(8)
+        layout.setSpacing(10)
 
         self._elide = elide
         self._full_text = str(value)
         line = text_height(self) + 4
 
         self._key = QLabel(key)
+        self._key.setProperty("role", "field")
         self._key.setStyleSheet(f"color: {TEXT_DIM};")
-        self._key.setMinimumWidth(128)
+        self._key.setMinimumWidth(text_width(key, self._key, 10))
         self._key.setMinimumHeight(line)
-        self._key.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self._key.setAlignment(Qt.AlignRight | Qt.AlignTop)
+        self._key.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
 
         self._value = QLabel(value)
         self._value.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -194,6 +199,42 @@ def button(
     btn.setEnabled(enabled)
     btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
     return btn
+
+
+def form_label(text: str) -> QLabel:
+    """表单字段标签。靠右对齐，宽度由 ``align_form_labels()`` 统一。
+
+    单独标一个 role 是为了让对齐函数能找到它们——页面里还有很多
+    其他 QLabel（标题、提示、指标），不能一律拉宽。
+    """
+    label = QLabel(text)
+    label.setProperty("role", "field")
+    label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+    label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+    return label
+
+
+def align_form_labels(root: QWidget, extra: int = 10) -> int:
+    """把 ``root`` 下所有 ``form_label()`` 拉到同一宽度，形成垂直对齐线。
+
+    宽度取本页最宽标签的**实测**宽度而不是写死 110px。写死的后果：
+    「Profile 目录」这类长标签在 125% 缩放下已需 115px，200% 下需 179px，
+    固定 110px 会直接裁字 —— 而这个项目的几何冒烟会把它报出来。
+
+    返回实际采用的宽度，便于测试断言。
+    """
+    labels = [
+        w
+        for w in root.findChildren(QLabel)
+        if str(w.property("role") or "") == "field"
+    ]
+    if not labels:
+        return 0
+    width = max(text_width(w.text(), w, extra) for w in labels)
+    for label in labels:
+        label.setMinimumWidth(width)
+        label.setMaximumWidth(width)
+    return width
 
 
 def spinbox(

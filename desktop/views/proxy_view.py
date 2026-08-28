@@ -41,10 +41,12 @@ from ..theme import (
 )
 from .widgets import (
     KeyValueRow,
+    align_form_labels,
     attach_overflow_tooltip,
     button,
     confirm,
     error,
+    form_label,
     hint_label,
     info,
     notify,
@@ -131,6 +133,7 @@ class ProxyView(QWidget):
         layout.addWidget(self._build_tracker_box(), 1)
 
         fit_all_checkboxes(self)
+        align_form_labels(self)
 
     # ---------- 本地代理池 ----------
     def _build_local_box(self) -> QWidget:
@@ -155,22 +158,22 @@ class ProxyView(QWidget):
         layout.addWidget(
             toolbar(
                 self.local_enabled,
-                QLabel("模式"),
+                form_label("模式"),
                 self.local_mode,
-                QLabel("协议"),
+                form_label("协议"),
                 self.local_type,
-                QLabel("主机"),
+                form_label("主机"),
                 self.local_host,
                 stretch_at=6,
             )
         )
         layout.addWidget(
             toolbar(
-                QLabel("单端口"),
+                form_label("单端口"),
                 self.local_single_port,
-                QLabel("池起始"),
+                form_label("池起始"),
                 self.local_port_start,
-                QLabel("池结束"),
+                form_label("池结束"),
                 self.local_port_end,
                 stretch_at=5,
             )
@@ -178,7 +181,7 @@ class ProxyView(QWidget):
 
         self.btn_save_local = button("保存", "primary")
         self.btn_reset_stats = button("重置表现统计", tooltip="清空 IP 成功率与黑名单")
-        self.btn_pick = button("试取一个代理")
+        self.btn_pick = button("试取一个代理", "outline")
         self.btn_save_local.clicked.connect(self._on_save_local)
         self.btn_reset_stats.clicked.connect(self._on_reset_stats)
         self.btn_pick.clicked.connect(self._on_pick)
@@ -220,19 +223,21 @@ class ProxyView(QWidget):
         layout.addWidget(self.resin_enabled)
         # 地址单独一行并吃满宽度：expanding 指向输入框（索引 1）
         layout.addWidget(
-            toolbar(QLabel("地址"), self.resin_url, expanding=1)
+            toolbar(form_label("地址"), self.resin_url, expanding=1)
         )
         layout.addWidget(
             toolbar(
-                QLabel("平台名"),
+                form_label("平台名"),
                 self.resin_platform,
-                QLabel("账号标识"),
+                form_label("账号标识"),
                 self.resin_identity,
             )
         )
 
         self.btn_save_resin = button("保存", "primary")
-        self.btn_test_resin = button("测试连接", tooltip="连续两次查出口 IP，验证连通与粘性")
+        self.btn_test_resin = button(
+            "测试连接", "outline", tooltip="连续两次查出口 IP，验证连通与粘性"
+        )
         self.btn_save_resin.clicked.connect(self._on_save_resin)
         self.btn_test_resin.clicked.connect(self._on_test_resin)
         layout.addWidget(toolbar(self.btn_save_resin, self.btn_test_resin, stretch_at=1))

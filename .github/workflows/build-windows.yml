@@ -122,6 +122,12 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           OA_DATA_DIR: ${{ runner.temp }}\oa-geometry-data
 
+      - name: UI polish smoke test
+        run: python tests/smoke_ui_polish.py
+        env:
+          QT_QPA_PLATFORM: offscreen
+          OA_DATA_DIR: ${{ runner.temp }}\oa-polish-data
+
       # ---------- Chromium 内核（体积大，走缓存） ----------
       - name: Cache patchright Chromium
         if: ${{ !inputs.skip_kernels }}

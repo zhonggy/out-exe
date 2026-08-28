@@ -147,7 +147,8 @@ OutlookAutomation/
 │   ├── prepare_chromium.py  整理双内核到 build/Chromium
 │   └── assemble_dist.py     组装打包产物 + 完整性校验
 ├── tests/
-│   ├── test_core.py         49 个单元测试（不需要浏览器）
+│   ├── test_core.py         51 个单元测试（不需要浏览器）
+│   ├── test_updater.py      更新模块单测（版本比较 / Release 解析）
 │   ├── test_theme_contrast.py  配色对比度审计（9 个用例）
 │   ├── smoke_gui.py         GUI 冒烟（offscreen）
 │   └── smoke_ipc.py         IPC 端到端冒烟
@@ -249,8 +250,8 @@ set OA_SYSTEM__MAX_WORKERS=5
 三处永远同源，都来自 git tag：
 
 ```
-git tag v1.4.0
-  → CI "Resolve version" 算出 OA_VERSION=1.4.0
+git tag v1.5.0
+  → CI "Resolve version" 算出 OA_VERSION=1.5.0
       → assemble_dist.py 写 dist/OutlookAutomation/version.txt
           → config/loader.py 读它 → APP_VERSION → 「关于」页、窗口标题、--version
       → installer.iss 的 AppVersion（控制面板里显示的版本）
@@ -308,6 +309,7 @@ python tests/smoke_update.py        # 更新页：版本比较 + 检查/下载/�
 python tests/smoke_stop_clear.py    # 停止执行后任务列表清空
 python tests/smoke_ui_metrics.py    # 行高/字体度量、高 DPI 缩放
 python tests/smoke_ui_geometry.py   # 逐控件几何：文字是否放得下
+python tests/smoke_ui_polish.py     # 视觉规范：表单对齐、主按钮唯一、样式一致
 ```
 
 冒烟测试覆盖：
@@ -339,11 +341,14 @@ python tests/smoke_ui_geometry.py   # 逐控件几何：文字是否放得下
 - **smoke_ui_geometry** — 逐控件对比"实际可用尺寸"与"文字需要的尺寸"，
   覆盖 3 档缩放 × 2 种窗口宽度。关掉 show 后的重算，它在 125% 报 10 处、
   150% 报 16 处
+- **smoke_ui_polish** — 视觉规范：同页表单标签等宽（形成垂直线）但页间
+  宽度独立、标签宽度随字体伸缩（写死 110px 会裁掉「Profile 目录」）、
+  同一工具栏只有一个实心主按钮、focus ring 与圆角边框规范一致
 
 另有 `tests/test_theme_contrast.py`（走 pytest，9 个用例）纯算色值不依赖渲染：
 WCAG 对比度、状态色可区分性、样式表无深色残留。把浅色值换回深色会立刻报 6 项失败。
 
-CI 上这八项都是打包的前置门禁，任一失败不产出安装包。
+CI 上这十二项都是打包的前置门禁，任一失败不产出安装包。
 
 端到端也已实测：headless 双 Worker 并发跑 4 个任务全部 COMPLETED，
 断点按 `BROWSER_STARTED → LOGIN_PAGE → COMPLETED` 落库，浏览器与 profile 正常回收。
@@ -366,8 +371,23 @@ CI 上这八项都是打包的前置门禁，任一失败不产出安装包。
 完全看不见。`views/flow_layout.py` 的 `FlowLayout` 改为折行，
 每个控件都拿到完整宽度。
 
-**配色是浅色（柔和灰白 + Windows 蓝）。** 色值集中在 `theme.py`，
+**配色是浅色（冷调灵白 + 科技蓝 `#2563eb`）。** 色值集中在 `theme.py`，
 状态色与背景层次都有命名常量，改主题只需动那一处。
+
+主色选 `#2563eb` 而不是更鲜艳的蓝，是因为它得同时胜任两个角色：实心按钮的
+底色（白字在其上 5.17:1）与 Outline 按钮的描边兼文字色（在白底上 5.17:1）。
+两个方向都要达 AA，再亮一档就做不了文字色。
+
+**卡片阴影用双层边框模拟。** QSS 不支持 `box-shadow`，真阴影要用
+`QGraphicsDropShadowEffect`，而仪表盘一页有 8 张卡片，每张挂个图形特效会让
+重绘肉眼可见地变慢。改用“比常规边框更浅的外圈 + 纯白内芯”的明度差制造
+浮起感，无渲染代价。
+
+**表单标签按页对齐，宽度跟着字体走。** 标签靠右对齐 + 同页统一宽度，输入框
+左边缘形成垂直直线。宽度取本页最宽标签的实测值而不写死：「Profile 目录」
+在 100% 就需 140px，200% 下需 179px，写死 110px 会直接裁字。对齐还必须是
+“页内”语义：代理页最长标签只 66px，关于页是 178px，全局拉平会让代理页
+白白浪费一大截横向空间。
 
 浅色比深色难调的地方：深色下"提亮"总能拉开对比，浅色下压暗过头会发脏、
 不够又发飘。深色主题用的亮绿 `#3fb950` 在白底上对比度只有 2.3:1，

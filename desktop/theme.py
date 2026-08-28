@@ -33,28 +33,33 @@ COLOR_OK = "#166f2f"        # 绿。压暗到在选中行底色上也 ≥4.5:1
 COLOR_FAIL = "#cf222e"      # 红，对比度 5.0:1
 COLOR_WARN = "#8a5c00"      # 琥珀。纯橙在白底上远不达标，只能走深琥珀
 COLOR_RUNNING = "#0a6e8a"   # 青蓝，对比度 5.0:1
-                            # 刻意偏青：与交互蓝 ACCENT(#0067c0) 拉开距离，
+                            # 刻意偏青：与交互蓝 ACCENT(#2563eb) 拉开距离，
                             # 否则"运行中"状态文字和主色按钮同色，
                             # 用户分不清哪个是可点的
 COLOR_IDLE = "#5f6b78"      # 灰。与 TEXT_DIM 刻意接近：都表示"次要"
 
 #: 背景三层：窗口底 < 卡片 < 悬停。浅色下层次靠"压暗"而非"提亮"
-BG = "#f5f6f8"              # 窗口底：轻微灰，避免纯白刺眼
+BG = "#f8fafc"              # 窗口底：带一丝冷调的极浅灰，避免纯白刺眼
 BG_ALT = "#ffffff"          # 卡片/输入框：纯白，浮在灰底上形成层次
-BG_HOVER = "#eef1f5"        # 悬停：比窗口底再暗一点
-BORDER = "#d4d9e0"          # 常规边框
+BG_HOVER = "#eef2f7"        # 悬停：比窗口底再暗一点
+BORDER = "#d8dfe8"          # 常规边框
+BORDER_SOFT = "#e2e8f0"     # 更浅的边框。用于卡片外圈与内部分隔：
+                            # QSS 不支持 box-shadow，阴影改用"浅外圈 + 纯白内芯"
+                            # 的明度差模拟，无重绘代价
 BORDER_STRONG = "#b6bec9"   # 强调边框（悬停、聚焦邻域）
 
 TEXT = "#1f2328"            # 正文：近黑而非纯黑，减少眩光
-TEXT_DIM = "#5c6773"        # 次要文字，对比度 5.6:1
+TEXT_DIM = "#5c6773"        # 次要文字，对比度 5.8:1
 TEXT_ON_ACCENT = "#ffffff"  # 主色按钮上的文字
 
-ACCENT = "#0067c0"          # Windows 11 强调蓝
-ACCENT_HOVER = "#1a7ad4"
-ACCENT_PRESSED = "#005499"
-ACCENT_SOFT = "#eef5fd"     # 主色的浅底（选中行、导航高亮）。
-                            # 比 #e8f1fb 更浅：作为大面积背景既不抢眼，
-                            # 也给状态色文字留出对比度空间
+ACCENT = "#2563eb"          # 科技蓝。白字在其上 5.17:1，作为文字色在白底 5.17:1
+                            # —— 两个方向都达 AA，所以它既能做实心按钮底色，
+                            # 也能做 Outline 按钮的描边与文字
+ACCENT_HOVER = "#3b76f0"
+ACCENT_PRESSED = "#1d4ed8"
+ACCENT_SOFT = "#eff6ff"     # 主色的浅底（选中行、导航高亮）。
+                            # 必须足够浅：它同时是表格选中行的底色，
+                            # 状态色文字要在它上面仍有 ≥4.5:1
 
 #: 危险操作按钮的浅色底
 DANGER_BG = "#fdf0ef"
@@ -63,7 +68,7 @@ DANGER_HOVER = "#fbe0de"
 
 #: 表格斑马纹与表头
 ROW_ALT = "#fafbfc"
-HEADER_BG = "#f0f2f5"
+HEADER_BG = "#f1f4f8"
 
 #: 滚动条
 SCROLL_HANDLE = "#c3cad3"
@@ -358,6 +363,8 @@ def refit_widget_tree(root) -> None:
             "title": FONT_SIZE_TITLE,
             "metric": FONT_SIZE_METRIC,
             "hint": FONT_SIZE_SMALL,
+            "logo": FONT_SIZE_TITLE - 2,
+            "badge": FONT_SIZE_SMALL - 1,
         }.get(str(role) if role else "", None)
         needed = text_height(label, size)
         if label.minimumHeight() < needed:
@@ -365,6 +372,19 @@ def refit_widget_tree(root) -> None:
 
     for table in root.findChildren(QTableView):
         apply_row_height(table)
+
+    # 表单标签对齐交给 root 自己做（如果它支持）。
+    #
+    # 不在这里直接 align_form_labels(root)：本函数常以整个窗口为 root，
+    # 一次性对齐会把所有页拉到全局最宽标签的宽度（实测 178px），
+    # 而代理页最长标签只需 66px，白白浪费一大截横向空间。
+    # 对齐是「页内」语义，MainWindow 实现 _realign_forms() 逐页处理。
+    realign = getattr(root, "_realign_forms", None)
+    if callable(realign):
+        try:
+            realign()
+        except Exception:
+            pass
 
 
 def apply_row_height(table, padding: int = 12, minimum: int = 30) -> None:
@@ -400,15 +420,24 @@ QLabel[role="hint"] {{
     font-size: {FONT_SIZE_SMALL}px;
     padding: 2px 0;
 }}
+QLabel[role="field"] {{
+    /* 表单字段标签：靠右对齐，宽度由 widgets.align_form_labels() 按
+       实测文字宽统一，从而让输入框左边缘形成垂直直线。 */
+    color: {TEXT_DIM};
+    padding: 1px 2px 1px 0;
+}}
 QLabel[role="metric"] {{
     font-size: {FONT_SIZE_METRIC}px;
     font-weight: 600;
     padding: 2px 0;
 }}
 QFrame[role="card"] {{
+    /* QSS 不支持 box-shadow。层次靠两件事模拟：卡片纯白内芯 +
+       比常规边框更浅的外圈。真阴影要用 QGraphicsDropShadowEffect，
+       卡片多的页面（仪表盘 8 张）重绘会肉2 帧。 */
     background: {BG_ALT};
-    border: 1px solid {BORDER};
-    border-radius: 8px;
+    border: 1px solid {BORDER_SOFT};
+    border-radius: 10px;
 }}
 QFrame[role="separator"] {{
     background: {BORDER};
@@ -468,6 +497,28 @@ QPushButton[variant="danger"]:disabled {{
     border-color: {BORDER};
     color: {DISABLED_TEXT};
 }}
+QPushButton[variant="outline"] {{
+    /* 描边按钮：与主色实心按钮成对。同一组里只能有一个实心主按钮，
+       否则用户分不出该先点哪个。 */
+    background: {BG_ALT};
+    border: 1px solid {ACCENT};
+    color: {ACCENT};
+    font-weight: 600;
+}}
+QPushButton[variant="outline"]:hover {{
+    background: {ACCENT_SOFT};
+    border-color: {ACCENT_HOVER};
+}}
+QPushButton[variant="outline"]:pressed {{
+    background: {ACCENT_SOFT};
+    border-color: {ACCENT_PRESSED};
+    color: {ACCENT_PRESSED};
+}}
+QPushButton[variant="outline"]:disabled {{
+    background: {DISABLED_BG};
+    border-color: {BORDER};
+    color: {DISABLED_TEXT};
+}}
 
 QLineEdit, QComboBox, QSpinBox, QPlainTextEdit, QTextEdit {{
     background: {BG_ALT};
@@ -485,7 +536,11 @@ QLineEdit:hover, QComboBox:hover, QSpinBox:hover {{
 }}
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus,
 QPlainTextEdit:focus, QTextEdit:focus {{
-    border-color: {ACCENT};
+    /* Focus ring：QSS 没有 outline-offset，用加粗的主色边框模拟。
+       边框从 1px 变 2px 会让内容区缩 1px，文字跳一下很明显，
+       所以 padding 同步减 1px 抵消位移。 */
+    border: 2px solid {ACCENT};
+    padding: 5px 8px;
 }}
 QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled {{
     background: {DISABLED_BG};
@@ -494,6 +549,16 @@ QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled {{
 QComboBox::drop-down {{
     width: 20px;
     border: none;
+}}
+QComboBox::down-arrow {{
+    /* 内嵌 SVG 箭头：Fusion 默认箭头与自定义边框风格不一致，
+       看起来像两套控件拼在一起 */
+    image: url("data:image/svg+xml;utf8,\
+<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'>\
+<path d='M2 3.5L5 6.5L8 3.5' fill='none' stroke='%235c6773' \
+stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+    width: 10px;
+    height: 10px;
 }}
 QComboBox QAbstractItemView {{
     background: {BG_ALT};
@@ -548,19 +613,21 @@ QCheckBox:disabled {{
 QListWidget[role="nav"] {{
     background: {BG_ALT};
     border: none;
-    border-right: 1px solid {BORDER};
     outline: none;
-    padding-top: 8px;
+    padding: 0 8px 8px 8px;
 }}
 QListWidget[role="nav"]::item {{
-    padding: 11px 18px;
-    border-left: 3px solid transparent;
+    /* 全圆角胶囊选中态：原来是方形色块 + 左侧 3px 竞技场跳水线，
+       色块直顶上下边界显得硬。胶囊形需要 item 自己留外边距，
+       所以容器 padding 改成左右各 8px。 */
+    padding: 10px 14px;
+    margin: 2px 0;
+    border-radius: 8px;
     color: {TEXT_DIM};
     min-height: {int(FONT_SIZE * _CJK_LINE_RATIO) + 4}px;
 }}
 QListWidget[role="nav"]::item:selected {{
     background: {ACCENT_SOFT};
-    border-left-color: {ACCENT};
     color: {ACCENT};
     font-weight: 600;
 }}
@@ -571,6 +638,29 @@ QListWidget[role="nav"]::item:hover {{
 QListWidget[role="nav"]::item:selected:hover {{
     background: {ACCENT_SOFT};
     color: {ACCENT};
+}}
+QWidget[role="sidebar"] {{
+    /* 侧边栏整体白底 + 右侧一条分隔：分隔线画在容器上而不是列表上，
+       否则 Logo 头部那段会缺一截线 */
+    background: {BG_ALT};
+    border-right: 1px solid {BORDER_SOFT};
+}}
+QLabel[role="logo"] {{
+    color: {TEXT};
+    font-size: {FONT_SIZE_TITLE - 2}px;
+    font-weight: 700;
+    padding: 4px 6px 2px 6px;
+    background: transparent;
+}}
+QLabel[role="badge"] {{
+    /* 版本胶囊：背景用主色浅底，不抢 Logo 本身的注意力 */
+    color: {ACCENT};
+    background: {ACCENT_SOFT};
+    border: 1px solid {BORDER_SOFT};
+    border-radius: 9px;
+    font-size: {FONT_SIZE_SMALL - 1}px;
+    font-weight: 600;
+    padding: 1px 8px;
 }}
 
 QTableView {{
@@ -661,8 +751,8 @@ QProgressBar::chunk {{
 
 QGroupBox {{
     background: {BG_ALT};
-    border: 1px solid {BORDER};
-    border-radius: 8px;
+    border: 1px solid {BORDER_SOFT};
+    border-radius: 10px;
     margin-top: 16px;
     padding: 14px 12px 12px 12px;
 }}

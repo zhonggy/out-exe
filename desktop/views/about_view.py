@@ -143,7 +143,7 @@ class AboutView(QWidget):
             layout.addWidget(row)
 
         self.btn_check = button("检查更新", "primary")
-        self.btn_download = button("下载更新", enabled=False)
+        self.btn_download = button("下载更新", "outline", enabled=False)
         self.btn_apply = button("立即重启并更新", "danger", enabled=False)
         self.btn_release_page = button("打开发布页")
 

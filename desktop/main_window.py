@@ -18,7 +18,9 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QSizePolicy,
     QStackedWidget,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -31,6 +33,7 @@ from .theme import (
     COLOR_WARN,
     TEXT_DIM,
     refit_widget_tree,
+    text_width,
 )
 from .views import (
     AboutView,
@@ -81,7 +84,6 @@ class MainWindow(QMainWindow):
 
         self.nav = QListWidget()
         self.nav.setProperty("role", "nav")
-        self.nav.setFixedWidth(160)
         self.nav.setFocusPolicy(Qt.NoFocus)
 
         self.stack = QStackedWidget()
@@ -98,11 +100,51 @@ class MainWindow(QMainWindow):
         self.nav.currentRowChanged.connect(self._on_nav_changed)
         self.nav.setCurrentRow(0)
 
-        layout.addWidget(self.nav)
+        layout.addWidget(self._build_sidebar())
         layout.addWidget(self.stack, 1)
         self.setCentralWidget(central)
 
         self._build_status_bar()
+
+    def _build_sidebar(self) -> QWidget:
+        """侧边栏 = Logo 头部 + 导航列表。
+
+        **为何 Logo 与版本胶囊上下排而不是并排：**并排时两者宽度相加，
+        实测 100% 缩放下就要 331px，150% 下込 480px —— 而窗口最窄只有
+        1030px，侧边栏吃掉一半会把内容区挤到放不下工具栏。
+
+        宽度同样不写死：按 Logo / 胶囊 / 最长导航项三者的实测宽取最大值。
+        """
+        holder = QWidget()
+        holder.setProperty("role", "sidebar")
+        box = QVBoxLayout(holder)
+        box.setContentsMargins(0, 12, 0, 0)
+        box.setSpacing(0)
+
+        head = QWidget()
+        head_col = QVBoxLayout(head)
+        head_col.setContentsMargins(14, 0, 12, 10)
+        head_col.setSpacing(3)
+
+        logo = QLabel("⚡ Outlook")
+        logo.setProperty("role", "logo")
+        badge = QLabel(f"v{APP_VERSION}")
+        badge.setProperty("role", "badge")
+        badge.setToolTip("当前版本（详细信息在「关于与更新」页）")
+        # 胶囊靠左且不拉伸，否则它的背景色会铺满整行，看起来像个色块
+        badge.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+
+        head_col.addWidget(logo)
+        head_col.addWidget(badge, 0, Qt.AlignLeft)
+
+        box.addWidget(head)
+        box.addWidget(self.nav, 1)
+
+        self._sidebar = holder
+        self._logo = logo
+        self._badge = badge
+        self._refit_sidebar()
+        return holder
 
     def _build_status_bar(self) -> None:
         bar = self.statusBar()
@@ -222,6 +264,41 @@ class MainWindow(QMainWindow):
         if not getattr(self, "_refitted", False):
             self._refitted = True
             refit_widget_tree(self)
+            # 侧边栏宽度也要重算：缩放后 Logo 与导航文字都变宽，
+            # 不重算会把「关于与更新」或 Logo 末尾裁掉
+            self._refit_sidebar()
+            # 表单标签逐页对齐：必须按页而不是按窗口，否则代理页的
+            # 短标签会被拉到和设置页最长标签一样宽，白费横向空间
+            self._realign_forms()
+
+    def _realign_forms(self) -> None:
+        """逐页对齐表单标签。
+
+        必须按页而不是按窗口：全局对齐会把代理页的「主机」（66px）
+        拉到和关于页「Qt / PySide6」（178px）一样宽。
+
+        由 refit_widget_tree() 回调，也在 showEvent 里直接调一次。
+        """
+        from .views.widgets import align_form_labels
+
+        for page in self._pages.values():
+            try:
+                align_form_labels(page)
+            except Exception:
+                continue
+
+    def _refit_sidebar(self) -> None:
+        """按当前字体重算侧边栏宽度。show 后要再调一次：构造期拿不到缩放后的字体。"""
+        holder = getattr(self, "_sidebar", None)
+        if holder is None:
+            return
+        widest_item = max((t for t, _ in _PAGES), key=len)
+        need = max(
+            text_width(self._logo.text(), self._logo, 26),
+            text_width(self._badge.text(), self._badge, 26),
+            text_width(widest_item, self.nav, 58),
+        )
+        holder.setFixedWidth(max(168, need))
 
     # ---------- 关闭 ----------
     def closeEvent(self, event: QCloseEvent) -> None:

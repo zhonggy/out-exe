@@ -41,10 +41,12 @@ from ..theme import (
 )
 from .widgets import (
     KeyValueRow,
+    align_form_labels,
     button,
     card,
     confirm,
     error,
+    form_label,
     hint_label,
     human_duration,
     human_time,
@@ -314,6 +316,8 @@ class TasksView(QWidget):
         header.setSectionResizeMode(7, QHeaderView.Stretch)
         layout.addWidget(self.table, 1)
 
+        align_form_labels(self)
+
     def _build_control_card(self) -> QWidget:
         holder = card()
         outer = QVBoxLayout(holder)
@@ -346,7 +350,7 @@ class TasksView(QWidget):
         outer.addWidget(self.state_label)
         outer.addWidget(
             toolbar(
-                QLabel("并发线程"),
+                form_label("并发线程"),
                 self.workers_spin,
                 self.btn_start,
                 self.btn_stop,

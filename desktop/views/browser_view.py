@@ -27,9 +27,11 @@ from ..bridge.tasks import run_async
 from ..theme import COLOR_FAIL, COLOR_OK, COLOR_WARN, TEXT_DIM, fit_all_checkboxes
 from .widgets import (
     KeyValueRow,
+    align_form_labels,
     button,
     confirm,
     error,
+    form_label,
     hint_label,
     info,
     notify,
@@ -67,7 +69,7 @@ class BrowserView(QWidget):
         self.btn_apply_kernel = button("应用", "primary")
         self.btn_apply_kernel.clicked.connect(self._on_apply_kernel)
         kernel_layout.addWidget(
-            toolbar(QLabel("使用内核"), self.kernel_combo, self.btn_apply_kernel, stretch_at=2)
+            toolbar(form_label("使用内核"), self.kernel_combo, self.btn_apply_kernel, stretch_at=2)
         )
 
         self.rows: Dict[str, KeyValueRow] = {
@@ -111,6 +113,7 @@ class BrowserView(QWidget):
         layout.addWidget(check_box, 1)
 
         fit_all_checkboxes(self)
+        align_form_labels(self)
 
     # ---------- 刷新 ----------
     def refresh(self) -> None:

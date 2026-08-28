@@ -31,9 +31,11 @@ from ..bridge.tasks import run_async
 from ..theme import COLOR_WARN, TEXT_DIM, fit_all_checkboxes, fit_input
 from .widgets import (
     KeyValueRow,
+    align_form_labels,
     button,
     confirm,
     error,
+    form_label,
     hint_label,
     info,
     notify,
@@ -82,7 +84,7 @@ class SettingsView(QWidget):
         outer.addWidget(scroll, 1)
 
         self.btn_save = button("保存设置", "primary")
-        self.btn_reload = button("放弃修改")
+        self.btn_reload = button("放弃修改", "outline")
         self.btn_save.clicked.connect(self._on_save)
         self.btn_reload.clicked.connect(self.refresh)
         self.hint = QLabel("")
@@ -91,6 +93,8 @@ class SettingsView(QWidget):
 
         # 本页有十来个勾选框，统一按文字宽度设最小宽度
         fit_all_checkboxes(self)
+        # 表单标签对齐：取本页最宽标签宽度，让输入框左边缘对成一条直线
+        align_form_labels(self)
 
     # ---------- 分组 ----------
     def _build_run_box(self) -> QWidget:
@@ -113,11 +117,11 @@ class SettingsView(QWidget):
 
         layout.addWidget(
             toolbar(
-                QLabel("并发线程"),
+                form_label("并发线程"),
                 self.max_workers,
-                QLabel("失败重试"),
+                form_label("失败重试"),
                 self.task_retry,
-                QLabel("账号分隔符"),
+                form_label("账号分隔符"),
                 self.account_separator,
                 stretch_at=5,
             )
@@ -153,9 +157,9 @@ class SettingsView(QWidget):
         self.nav_timeout = spinbox(1000, 600000, suffix=" ms", step=5000)
         layout.addWidget(
             toolbar(
-                QLabel("操作超时"),
+                form_label("操作超时"),
                 self.timeout,
-                QLabel("导航超时"),
+                form_label("导航超时"),
                 self.nav_timeout,
                 stretch_at=3,
             )
@@ -180,16 +184,16 @@ class SettingsView(QWidget):
 
         layout.addWidget(
             toolbar(
-                QLabel("验证码策略"),
+                form_label("验证码策略"),
                 self.captcha_strategy,
-                QLabel("重试次数"),
+                form_label("重试次数"),
                 self.max_captcha_retries,
                 stretch_at=3,
             )
         )
         layout.addWidget(
             toolbar(
-                QLabel("等待验证超时"),
+                form_label("等待验证超时"),
                 self.wait_verify_timeout,
                 self.captcha_screenshot,
                 self.checkpoint_enabled,
@@ -217,10 +221,10 @@ class SettingsView(QWidget):
 
         layout.addWidget(
             toolbar(
-                QLabel("级别"),
+                form_label("级别"),
                 self.log_level,
                 self.log_to_file,
-                QLabel("界面显示行数"),
+                form_label("界面显示行数"),
                 self.log_view_limit,
                 stretch_at=4,
             )
